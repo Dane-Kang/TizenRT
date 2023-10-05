@@ -57,9 +57,19 @@
 #include <tinyara/config.h>
 #include <stdio.h>
 
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <termios.h>
+#include <string.h>
+#include <unistd.h>
+#define __DEBUG__
 /****************************************************************************
  * hello_main
  ****************************************************************************/
+#define T_MAX_DATA_SIZE  2048
+//#define USE_TERMINAL
+#define USE_DOCKLIGHT
 
 #ifdef CONFIG_BUILD_KERNEL
 int main(int argc, FAR char *argv[])
@@ -68,5 +78,110 @@ int hello_main(int argc, char *argv[])
 #endif
 {
 	printf("Hello, World!!\n");
+#ifdef USE_TERMINAL
+    int fd = 0;
+    char buf_tx[255], ch;
+    int ret;
+
+    for(int i = 0 ; i < 98 ; i++) {
+        buf_tx[i] = i+1;
+    }
+    buf_tx[99] = '\r';
+    buf_tx[100] = '\n';
+
+    fd = open("/dev/ttyS2",O_RDWR | O_NOCTTY);
+    while(1) {
+        ret = write(fd, buf_tx, 100) ;        
+        printf("write length = %d\n",ret);
+        sleep(2);
+
+        // if(ch = getchar())
+        //     break;
+    }
+
+#else    
+    struct termios tio;
+    int fd = 0;
+    int ret = -1;
+    unsigned char *pBuf = NULL;
+    pBuf = (unsigned char *)malloc( T_MAX_DATA_SIZE + 1 );
+    if( pBuf == NULL )
+    {
+        printf( "pBuf malloc failed...\n" );
+        return 0;
+    }
+    fd = open( "/dev/ttyS2", O_RDWR | O_NOCTTY );
+    if( fd < 0 )
+    {
+        printf( "tty open failed...%d\n", fd );
+        return 0;
+    }
+    ret = tcgetattr(fd, &tio);
+    if (ret < 0) {
+        printf( "tcgetattr failed...%d\n", fd );
+        return 0;
+    }
+    tio.c_speed = B115200;
+    tio.c_cflag &= ~CSIZE;
+    tio.c_cflag |= CS8;
+    tio.c_cflag &= ~PARENB;
+    tio.c_cflag &= ~PARODD;
+    tio.c_cflag |= CSTOPB;
+    ret = tcsetattr(fd, TCSANOW, &tio);
+    if (ret < 0) {
+        printf( "tcsetattr failed...%d\n", fd );
+        return 0;
+    }
+    
+    
+
+    printf( "%s(%d) : start read from uart...\n", __func__, __LINE__ );
+	
+	char cmp[] = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789";
+	char tmp[101] = {};
+	int cnt = 0;
+    while( 1 )
+    {
+        memset( pBuf, 0, T_MAX_DATA_SIZE );
+        ret = read( fd, pBuf, T_MAX_DATA_SIZE );
+        //printf("input length = %d \n", ret);
+		
+        if( ret <= 0 )
+        {
+            break;
+        }
+
+		cnt = cnt + ret;
+		strcat(tmp, pBuf);
+
+
+		if(cnt >= 100) 
+		{
+			cnt = 0;
+			if(strcmp(tmp, cmp) == 0)
+			{
+				printf("Matched %s\r\n",tmp);
+			}
+			else
+			{
+				printf("Fail to Matched !!!! %s\r\n",tmp);
+			}
+			memset(tmp,0,sizeof(tmp));
+		}
+
+        ret = write( fd, pBuf, ret );
+        if( ret <= 0 )
+        {
+            break;
+        }
+    }
+
+    if( pBuf != NULL )
+    {
+        free( pBuf );
+    }
+
+	return 0;
+#endif    
 	return 0;
 }

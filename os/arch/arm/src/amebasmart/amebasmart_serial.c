@@ -811,7 +811,7 @@ static int rtl8730e_up_setup(struct uart_dev_s *dev)
 	DEBUGASSERT(!sdrv[uart_index_get(priv->tx)]);
 	sdrv[uart_index_get(priv->tx)] = (serial_t *)kmm_malloc(sizeof(serial_t));
 	DEBUGASSERT(sdrv[uart_index_get(priv->tx)]);
-#if (CONFIG_UART4_BAUD != 1500000)
+#if 0//(CONFIG_UART4_BAUD != 1500000)
 #error "Error Amebasmart UART4 works with fixed baud rate: 1,500,000. Please set it to 1500000 in the menuconfig"
 #endif
 	if (uart_index_get(priv->tx) == 4)	{//Loguart cannot be stopped
@@ -819,6 +819,10 @@ static int rtl8730e_up_setup(struct uart_dev_s *dev)
 		irq_unregister(RTL8730E_UART_LOG_IRQ-32);
 		InterruptRegister((IRQ_FUN)rtl8730e_log_uart_irq, RTL8730E_UART_LOG_IRQ-32, (int)NULL, 4);
 		InterruptEn(RTL8730E_UART_LOG_IRQ-32, 4);
+		Pinmux_UartLogCtrl(PINMUX_S0, ON);
+		LOGUART_SetBaud(LOGUART_DEV, priv->baud);
+		LOGUART_INTConfig(LOGUART_DEV, RUART_BIT_ERBI, ENABLE);
+		LOGUART_RxCmd(LOGUART_DEV, ENABLE);
 	} else {
 		sdrv[uart_index_get(priv->tx)]->uart_idx = uart_index_get(priv->tx);
 		serial_init((serial_t *) sdrv[uart_index_get(priv->tx)], priv->tx, priv->rx);
