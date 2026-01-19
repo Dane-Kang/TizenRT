@@ -56,10 +56,78 @@
 
 #include <tinyara/config.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <debug.h>
+#include <tinyara/net/dns.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+
+#ifdef CONFIG_NET_LWIP
+#include "lwip/inet.h"
+#else
+#include <arpa/inet.h>
+#endif
+/****************************************************************************
+ * Definitions
+ ****************************************************************************/
+#ifndef DNS_DEFAULT_PORT
+#define DNS_DEFAULT_PORT   53
+#endif
+
+#define DNS_NAME_MAXSIZE 512
+
+/****************************************************************************
+ * Enumeration
+ ****************************************************************************/
+
+/****************************************************************************
+ * Structure
+ ****************************************************************************/
+
+/****************************************************************************
+ * Private Data
+ ****************************************************************************/
+char exhostname[DNS_NAME_MAXSIZE];
 
 /****************************************************************************
  * hello_main
  ****************************************************************************/
+void pthread_task()
+{
+	printf("This is the second thread start\n");
+	struct hostent *shost = NULL;
+	struct sockaddr_in dns_addr;
+	char dnsname[3][60] = {"ocfconnect-shard-ap03-apnortheast2.samsungiotcloud.com",
+			"ash-apne2.mgmt.aibixby.com",
+			"info.cspserver.net"
+	};
+	int cnt = 0;
+	while(1){
+		memset(exhostname, 0x00, DNS_NAME_MAXSIZE);
+
+		strncpy(exhostname, dnsname[cnt], DNS_NAME_MAXSIZE);
+		printf("exhostname : %s [len %d]\n", exhostname, strlen(exhostname));
+
+		if ((shost = gethostbyname(exhostname)) == NULL || shost->h_addr_list == NULL) {
+			printf("dnsclient : failed to resolve host's IP address, shost %p\n", shost);
+			return -1;
+		} else {
+			printf("IP Address : %s\n", inet_ntoa(*((struct in_addr *)shost->h_addr_list[0])));
+		}
+		if(cnt == 2) cnt = 0;
+		else cnt ++;
+		sleep(1);
+	}
+}
 
 #ifdef CONFIG_BUILD_KERNEL
 int main(int argc, FAR char *argv[])
@@ -68,5 +136,9 @@ int hello_main(int argc, char *argv[])
 #endif
 {
 	printf("Hello, World!!\n");
+	//pthread_t thread1;
+	//pthread_create(&thread1, NULL, pthread_task, NULL);
+	//pthread_join(thread1, NULL);
+
 	return 0;
 }

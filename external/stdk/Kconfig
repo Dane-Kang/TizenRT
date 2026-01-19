@@ -7,8 +7,6 @@ config STDK_IOT_CORE
 	bool "Enable SmartThings IoT Core"
 	default n
 	depends on NET_SECURITY_TLS
-	select OPENSSL_WRAPPER
-	select LIBSODIUM
 	---help---
 		Select this option to enable support for the Samsung SmartThings
 		IoT Core via the esp-idf component for the Samsung SmartThings IoT Device C SDK.
@@ -144,8 +142,9 @@ choice STDK_IOT_CORE_NET_INTERFACE
 
 config STDK_IOT_CORE_NET_MBEDTLS
     bool "mbedTLS"
-config STDK_IOT_CORE_NET_OPENSSL
-    bool "OpenSSL"
+#config STDK_IOT_CORE_NET_OPENSSL
+#    bool "OpenSSL"
+#    select OPENSSL_WRAPPER
 endchoice
 
 endmenu # Network

@@ -82,6 +82,8 @@
 extern "C" {
 #endif
 
+#define MBEDTLS_ECDH_LEGACY_CONTEXT
+
 /**
  * Defines the source of the imported EC key.
  */

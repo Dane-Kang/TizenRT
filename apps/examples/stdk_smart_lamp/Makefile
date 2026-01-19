@@ -73,10 +73,11 @@ CFLAGS+=-I$(STDK_SRC_DIR)/include/bsp
 CFLAGS+=-I$(STDK_SRC_DIR)/include/os
 CFLAGS+=-I$(STDK_SRC_DIR)/include/mqtt
 CFLAGS+=-I$(STDK_SRC_DIR)/port/os/tizenrt
+CFLAGS+=-I$(TOPDIR)/../framework/include
 
 ASRCS =
 CSRCS =
-MAINSRC = smart_lamp.c device_control.c
+MAINSRC = smart_lamp.c device_control.c caps_switch.c
 
 AOBJS = $(ASRCS:.S=$(OBJEXT))
 COBJS = $(CSRCS:.c=$(OBJEXT))

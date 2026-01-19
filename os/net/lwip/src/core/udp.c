@@ -766,6 +766,7 @@ err_t udp_sendto_if_src_chksum(struct udp_pcb *pcb, struct pbuf *p, const ip_add
 #endif							/* LWIP_UDPLITE */
 	{							/* UDP */
 		LWIP_DEBUGF(UDP_DEBUG, ("udp_send: UDP packet length %" U16_F "\n", q->tot_len));
+		lldbg("udp_send: UDP packet length %" U16_F "\n", q->tot_len);
 		udphdr->len = lwip_htons(q->tot_len);
 		/* calculate checksum */
 #if CHECKSUM_GEN_UDP

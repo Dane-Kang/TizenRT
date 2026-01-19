@@ -60,7 +60,7 @@ enum tash_input_state_e {
 #endif							/* CONFIG_TASH */
 
 #ifdef CONFIG_PM
-#define TASH_PM_TIMEDSUSPEND_TIME_IN_MS 5000
+#define TASH_PM_TIMEDSUSPEND_TIME_IN_MS 400
 #endif
 
 static int tash_running = FALSE;

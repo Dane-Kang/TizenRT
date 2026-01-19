@@ -33,6 +33,6 @@
 
 #define MBEDTLS_X509_CSR_PARSE_C
 
-#define MBEDTLS_XTEA_C
+//#define MBEDTLS_XTEA_C
 
 #endif /* _STDK_MBEDTLS_CONFIG_H */
