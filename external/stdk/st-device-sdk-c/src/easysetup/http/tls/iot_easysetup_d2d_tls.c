@@ -1085,7 +1085,8 @@ iot_error_t iot_easysetup_request_handler(struct iot_context *ctx, struct iot_ea
 
 	response.step = request.step;
 	response.payload = NULL;
-
+	IOT_INFO("requested step : %d", request.step);
+	
 	switch (request.step) {
 	case IOT_EASYSETUP_STEP_DEVICEINFO:
 		err = _es_deviceinfo_handler(ctx, &response.payload);

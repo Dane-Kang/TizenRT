@@ -213,6 +213,7 @@ iot_error_t _iot_security_be_bsp_fs_load(iot_security_be_context_t *be_context, 
 		IOT_ERROR("cannot found target for id = %d", storage_id);
 		IOT_ERROR_DUMP_AND_RETURN(FS_UNKNOWN_TARGET, 0);
 	}
+	IOT_DEBUG("output_buf = %s", output_buf->p);
 }
 
 STATIC_FUNCTION

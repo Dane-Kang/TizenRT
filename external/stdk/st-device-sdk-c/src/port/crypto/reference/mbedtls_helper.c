@@ -18,6 +18,7 @@
 
 #include "iot_debug.h"
 #include "mbedtls_helper.h"
+#include "tizenrt_helper.h"
 
 #include "mbedtls/version.h"
 #include "mbedtls/sha256.h"
@@ -913,6 +914,23 @@ static iot_error_t _swap_secret(iot_security_buffer_t *src, iot_security_buffer_
 	return IOT_ERROR_NONE;
 }
 
+void sl_print_buffer(char *data, int buf_len, const char *message)
+{
+	printf("================================\n");
+	printf("%s length(%d)\n", message, buf_len);
+	printf("--------------------------------\n");
+	for (int i = 0; i < buf_len; i++) {
+		if (i != 0 && i % 16 == 0) {
+			printf("\n");
+		}
+		printf("%02x ", data[i]);
+	}
+	printf("\n");
+	printf("================================\n");
+}
+
+#define ST_SLOT_ENTRY 34
+
 iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_seckey_buf, iot_security_buffer_t *c_pubkey_buf, iot_security_buffer_t *output_buf)
 {
 	iot_error_t err;
@@ -944,6 +962,23 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 		IOT_ERROR("cloud pubkey is too large");
 		return IOT_ERROR_SECURITY_ECDH_INVALID_PUBKEY;
 	}
+    sl_print_buffer(c_pubkey_buf->p, c_pubkey_buf->len, "c_pubkey_buf");
+	sl_print_buffer(t_seckey_buf->p, t_seckey_buf->len, "t_seckey_buf");
+
+	err = set_st_device_key();
+	if (err) {
+		IOT_ERROR("mbedtls_ctr_drbg_seed = -0x%04X", -ret);
+		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
+		goto exit;
+	}
+
+	iot_security_buffer_t c_pubkey_buf_ecc25519 = { 0 };
+	err = convert_ed25519_to_ecc25519(c_pubkey_buf->p, &c_pubkey_buf_ecc25519);
+	if (err) {
+		IOT_ERROR("mbedtls_ctr_drbg_seed = -0x%04X", -ret);
+		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
+		goto exit;
+	}
 
 	pmsecret_buf.len = secret_len;
 	pmsecret_buf.p = (unsigned char *)iot_os_malloc(pmsecret_buf.len);
@@ -953,6 +988,7 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 	}
 
 	mbedtls_ecdh_init(&mbed_ecdh);
+	mbedtls_mpi_init(&mbed_ecdh.MBEDTLS_PRIVATE(z));
 	mbedtls_ctr_drbg_init(&mbed_ctr_drbg);
 	mbedtls_entropy_init(&mbed_entropy);
 
@@ -964,20 +1000,27 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 		goto exit;
 	}
 
-#if MBEDTLS_VERSION_NUMBER > 0x03000000
 	ret = mbedtls_ecp_group_load(&mbed_ecdh.MBEDTLS_PRIVATE(grp), mbed_ecp_grp_id);
 	if (ret) {
 		IOT_ERROR("mbedtls_ecp_group_load = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
+	
+	mbed_ecdh.MBEDTLS_PRIVATE(grp).key_index = ST_SLOT_ENTRY;
+	IOT_DEBUG("Set key_index to %d", ST_SLOT_ENTRY);
 
+#if SWAP_KEY
 	err = _swap_secret(t_seckey_buf, &swap_buf);
 	if (err) {
 		goto exit;
 	}
-
+	sl_print_buffer(swap_buf.p, swap_buf.len, "swap converted private key");
 	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(d), swap_buf.p, swap_buf.len);
+#else
+	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(d), t_seckey_buf->p, t_seckey_buf->len);
+	sl_print_buffer(t_seckey_buf->p, t_seckey_buf->len, "private key");
+#endif
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
@@ -987,12 +1030,17 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 
 	iot_security_buffer_free(&swap_buf);
 
-	err = _swap_secret(c_pubkey_buf, &swap_buf);
+#if SWAP_KEY
+	err = _swap_secret(&c_pubkey_buf_ecc25519, &swap_buf);
 	if (err) {
 		goto exit;
 	}
+	sl_print_buffer(swap_buf.p, swap_buf.len, "swap converted peer public key");
 
 	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X), swap_buf.p, swap_buf.len);
+#else
+	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X), c_pubkey_buf_ecc25519.p, c_pubkey_buf_ecc25519.len);
+#endif
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
@@ -1001,6 +1049,13 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 	}
 
 	iot_security_buffer_free(&swap_buf);
+	
+	ret = mbedtls_mpi_lset(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(Y), 1);
+	if (ret) {
+		IOT_ERROR("mbedtls_mpi_lset = -0x%04X", -ret);
+		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
+		goto exit;
+	}
 
 	ret = mbedtls_mpi_lset(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(Z), 1);
 	if (ret) {
@@ -1009,89 +1064,43 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 		goto exit;
 	}
 
-	ret = mbedtls_ecdh_compute_shared(&mbed_ecdh.MBEDTLS_PRIVATE(grp),
+	ret = tizenrt_helper_ecdh_compute_shared_x25519(&mbed_ecdh.MBEDTLS_PRIVATE(grp),
 			&mbed_ecdh.MBEDTLS_PRIVATE(z),
 			&mbed_ecdh.MBEDTLS_PRIVATE(Qp),
 			&mbed_ecdh.MBEDTLS_PRIVATE(d), mbedtls_ctr_drbg_random, &mbed_ctr_drbg);
+
+	// ret = mbedtls_ecdh_compute_shared(&mbed_ecdh.MBEDTLS_PRIVATE(grp),
+	// 		&mbed_ecdh.MBEDTLS_PRIVATE(z),
+	// 		&mbed_ecdh.MBEDTLS_PRIVATE(Qp),
+	// 		&mbed_ecdh.MBEDTLS_PRIVATE(d), mbedtls_ctr_drbg_random, &mbed_ctr_drbg);
 	if (ret) {
 		IOT_ERROR("mbedtls_ecdh_compute_shared = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
-
+IOT_DEBUG("1");
 	ret = mbedtls_mpi_write_binary(&mbed_ecdh.MBEDTLS_PRIVATE(z), pmsecret_buf.p, pmsecret_buf.len);
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_write_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
-#else
-	ret = mbedtls_ecp_group_load(&mbed_ecdh.grp, mbed_ecp_grp_id);
-	if (ret) {
-		IOT_ERROR("mbedtls_ecp_group_load = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		goto exit;
-	}
-
-	err = _swap_secret(t_seckey_buf, &swap_buf);
-	if (err) {
-		goto exit;
-	}
-
-	ret = mbedtls_mpi_read_binary(&mbed_ecdh.d, swap_buf.p, swap_buf.len);
-	if (ret) {
-		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		iot_security_buffer_free(&swap_buf);
-		goto exit;
-	}
-
-	iot_security_buffer_free(&swap_buf);
-
-	err = _swap_secret(c_pubkey_buf, &swap_buf);
-	if (err) {
-		goto exit;
-	}
-
-	ret = mbedtls_mpi_read_binary(&mbed_ecdh.Qp.X, swap_buf.p, swap_buf.len);
-	if (ret) {
-		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		iot_security_buffer_free(&swap_buf);
-		goto exit;
-	}
-
-	iot_security_buffer_free(&swap_buf);
-
-	ret = mbedtls_mpi_lset(&mbed_ecdh.Qp.Z, 1);
-	if (ret) {
-		IOT_ERROR("mbedtls_mpi_lset = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		goto exit;
-	}
-
-	ret = mbedtls_ecdh_compute_shared(&mbed_ecdh.grp, &mbed_ecdh.z, &mbed_ecdh.Qp, &mbed_ecdh.d, mbedtls_ctr_drbg_random, &mbed_ctr_drbg);
-	if (ret) {
-		IOT_ERROR("mbedtls_ecdh_compute_shared = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		goto exit;
-	}
-
-	ret = mbedtls_mpi_write_binary(&mbed_ecdh.z, pmsecret_buf.p, pmsecret_buf.len);
-	if (ret) {
-		IOT_ERROR("mbedtls_mpi_write_binary = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
-		goto exit;
-	}
-#endif
-
+IOT_DEBUG("1");
+#if SWAP_KEY
 	err = _swap_secret(&pmsecret_buf, &swap_buf);
 	if (err) {
 		goto exit;
 	}
-
+IOT_DEBUG("1");
 	output_buf->p = swap_buf.p;
 	output_buf->len = swap_buf.len;
+#else
+	output_buf->p = pmsecret_buf.p;
+	output_buf->len = pmsecret_buf.len;
+	/* prevent double free: transfer ownership to output_buf */
+	pmsecret_buf.p = NULL;
+	pmsecret_buf.len = 0;
+#endif
 	err = IOT_ERROR_NONE;
 
 exit:

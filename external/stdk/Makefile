@@ -83,12 +83,16 @@ CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/*.c)
 
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_HTTP),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/*.c)
+endif
+ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_X509),y)
+CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/tls/*.c)
+else
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/tcp/*.c)
+endif
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_DISCOVERY_SSID),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/discovery/ssid/*.c)
 else
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)easysetup/discovery/advertiser/*.c)
-endif
 endif
 
 #################################################

@@ -470,6 +470,7 @@ iot_error_t _es_keyinfo_handler(struct iot_context *ctx, char *input_data, char 
 	size_t spub_len = 0;
 	size_t rand_asc_len = 0;
 
+	IOT_DEBUG("input_data = %s", input_data);
 	root = JSON_PARSE(input_data);
 	if (!root) {
 		IOT_ERROR("Invalid json format of payload");

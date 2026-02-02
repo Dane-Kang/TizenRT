@@ -8,7 +8,7 @@
     "ownershipValidationTypes": [
       "BUTTON"
     ],
-    "identityType": "ED25519",
+    "identityType": "X_509",
     "deviceIntegrationProfileKey": {
       "id": "2b07851f-5b3a-4144-a532-d1a4e4a7f6b6",
       "majorVersion": 0,

@@ -31,6 +31,8 @@
 #include "mbedtls/platform.h"
 #if MBEDTLS_VERSION_NUMBER > 0x03000000
 #include "mbedtls/net_sockets.h"
+#include "mbedtls/x509_crt.h"
+#include "mbedtls/net_sockets.h"
 #else
 #include "mbedtls/net.h"
 #endif

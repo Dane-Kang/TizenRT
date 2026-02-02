@@ -73,11 +73,11 @@ static void es_http_tls_task(void *data)
 
 		do
 		{
-			ret = port_net_read_poll(net_ctx);
+			ret = port_net_read_poll(net_ctx, 0);
 			if (ret < 0) {
 				IOT_ERROR("Read error");
 				break;
-			} else (ret == 0) {
+			} else if(ret == 0) {
 				continue;
 			}
 			len = sizeof( buf ) - 1;

@@ -546,7 +546,7 @@ iot_error_t iot_api_onboarding_config_load(unsigned char *onboarding_config,
 	item = JSON_GET_OBJECT_ITEM(config, name_identityType);
 	if (!item || !strcmp(JSON_GET_STRING_VALUE(item), "ED25519")) {
 		pk_type = IOT_SECURITY_KEY_TYPE_ED25519;
-	} else if (!strcmp(JSON_GET_STRING_VALUE(item), "X509")) {
+	} else if (!strcmp(JSON_GET_STRING_VALUE(item), "X_509")) {
 		pk_type = IOT_SECURITY_KEY_TYPE_ECCP256;
 	} else {
 #if defined(CONFIG_STDK_IOT_CORE_LOG_LEVEL_ERROR)
@@ -987,6 +987,7 @@ iot_error_t iot_api_read_device_identity(unsigned char* nv_prof,
 
 	iot_os_free(data);
 
+	IOT_INFO("Get %s : %s", name_deviceInfo, object_data);
 	return iot_err;
 
 load_out:

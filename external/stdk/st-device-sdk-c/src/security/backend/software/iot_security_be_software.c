@@ -26,6 +26,21 @@
 #include "security/backend/iot_security_be.h"
 #include "port_crypto.h"
 
+void be_print_buffer(char *data, int buf_len, const char *message)
+{
+	printf("================================\n");
+	printf("%s length(%d)\n", message, buf_len);
+	printf("--------------------------------\n");
+	for (int i = 0; i < buf_len; i++) {
+		if (i != 0 && i % 16 == 0) {
+			printf("\n");
+		}
+		printf("%02x ", data[i]);
+	}
+	printf("\n");
+	printf("================================\n");
+}
+
 STATIC_FUNCTION
 iot_error_t _iot_security_be_check_context_and_params_is_valid(iot_security_context_t *context, iot_security_sub_system_t sub_system)
 {
@@ -973,7 +988,6 @@ iot_error_t _iot_security_be_software_ecdh_set_params(iot_security_context_t *co
 	if (err) {
 		return err;
 	}
-
 	err = _iot_security_be_software_ecdh_copy_params(&ecdh_set_params->c_pubkey, &context->ecdh_params->c_pubkey);
 	if (err) {
 		return err;

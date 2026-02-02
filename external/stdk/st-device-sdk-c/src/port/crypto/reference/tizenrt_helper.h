@@ -20,16 +20,23 @@
 #define _TIZENRT_HELPER_H_
 
 #include "security/iot_security_common.h"
+#include "mbedtls/ecp.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define SWAP_KEY 0
+
 iot_error_t tizenrt_helper_pk_sign_ed25519(iot_security_pk_params_t *pk_params, iot_security_buffer_t *input_buf, iot_security_buffer_t *sig_buf);
 
 iot_error_t tizenrt_helper_pk_verify_ed25519(iot_security_pk_params_t *pk_params, iot_security_buffer_t *input_buf, iot_security_buffer_t *sig_buf);
 
-iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(iot_security_buffer_t *t_seckey_buf, iot_security_buffer_t *c_pubkey_buf, iot_security_buffer_t *output_buf);
+iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(mbedtls_ecp_group *grp, mbedtls_mpi *z, const mbedtls_ecp_point *Q, const mbedtls_mpi *d, int (*f_rng)(void *, unsigned char *, size_t), void *p_rng);
+
+iot_error_t set_st_device_key(void);
+
+iot_error_t convert_ed25519_to_ecc25519(unsigned char* data, iot_security_buffer_t *output_buf);
 
 #ifdef __cplusplus
 }

@@ -19,14 +19,14 @@
 #include "iot_bsp_nv_data.h"
 #include "iot_debug.h"
 
-const char *iot_bsp_nv_get_data_path(iot_nvd_t nv_type)
+const char* iot_bsp_nv_get_data_path(iot_nvd_t nv_type)
 {
 	HIT();
 	IOT_WARN_CHECK((nv_type < 0 || nv_type > IOT_NVD_MAX), NULL, "Invalid args");
 
 	switch (nv_type) {
 
-	/* wifi prov data, smartfs based */
+	/* wifi prov data */
 	case IOT_NVD_WIFI_PROV_STATUS:
 		return "/mnt/WifiProvStatus";
 	case IOT_NVD_AP_SSID:
@@ -39,7 +39,7 @@ const char *iot_bsp_nv_get_data_path(iot_nvd_t nv_type)
 		return "/mnt/IotAPAuthType";
 	/* wifi prov data */
 
-	/* cloud prov data, smartfs based */
+	/* cloud prov data */
 	case IOT_NVD_CLOUD_PROV_STATUS:
 		return "/mnt/CloudProvStatus";
 	case IOT_NVD_SERVER_URL:
@@ -53,7 +53,7 @@ const char *iot_bsp_nv_get_data_path(iot_nvd_t nv_type)
 	case IOT_NVD_MISC_INFO:
 		return "/mnt/MiscInfo";
 
-	/* stored in stnv partition (manufacturer data),romfs based */
+	/* stored in stnv partition (manufacturer data) */
 	case IOT_NVD_PRIVATE_KEY:
 		return "/rom/PrivateKey";
 	case IOT_NVD_PUBLIC_KEY:
@@ -66,7 +66,7 @@ const char *iot_bsp_nv_get_data_path(iot_nvd_t nv_type)
 		return "/rom/DeviceCert";
 	case IOT_NVD_SERIAL_NUM:
 		return "/rom/SerialNum";
-	/* stored in stnv partition (manufacturer data) */
+		/* stored in stnv partition (manufacturer data) */
 
 	default:
 		return NULL;
