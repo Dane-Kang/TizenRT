@@ -20,9 +20,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define GPIO_INPUT_BUTTON 52
-
-#define GPIO_OUTPUT_MAINLED_R ( _PB_20 )
+#define GPIO_LED 52
+#define GPIO_INPUT_BUTTON ( _PA_25 )
 
 enum switch_onoff_state {
     SWITCH_OFF = 0,
@@ -67,8 +66,3 @@ enum button_event_type {
 }
 
 void change_switch_state(int switch_state);
-void button_isr_handler(void *arg);
-int get_button_event(int* button_event_type, int* button_event_count);
-void led_blink(int switch_state, int delay, int count);
-void change_led_mode(int noti_led_mode);
-void iot_gpio_init(void);

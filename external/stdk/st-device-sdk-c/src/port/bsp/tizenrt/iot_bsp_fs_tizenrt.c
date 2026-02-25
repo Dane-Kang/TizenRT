@@ -22,13 +22,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include "iot_bsp_fs.h"
+#include "iot_debug.h"
 
-/*
- * Using romfs and smartfs as underlying storage
- * they are mounted during booting up
- */
 iot_error_t iot_bsp_fs_init()
 {
 	return IOT_ERROR_NONE;
@@ -39,97 +37,121 @@ iot_error_t iot_bsp_fs_deinit()
 	return IOT_ERROR_NONE;
 }
 
-iot_error_t iot_bsp_fs_open(const char *filename, iot_bsp_fs_open_mode_t mode, iot_bsp_fs_handle_t *handle)
+iot_error_t iot_bsp_fs_open(const char* filename, iot_bsp_fs_open_mode_t mode, iot_bsp_fs_handle_t* handle)
 {
-	mode_t fmode;
+	int fd;
+	int open_mode;
 
 	if (mode == FS_READONLY) {
-		fmode = O_RDONLY;
+		open_mode = O_RDONLY;
 	} else {
-		fmode = O_RDWR | O_CREAT;
+		open_mode = O_RDWR | O_CREAT;
 	}
 
-	int fd = open(filename, fmode);
-	if (fd < 0) {
-		return IOT_ERROR_FS_OPEN_FAIL;
+	fd = open(filename, open_mode, 0644);
+	if (fd > 0) {
+		handle->fd = fd;
+		snprintf(handle->filename, sizeof(handle->filename), "%s", filename);
+		return IOT_ERROR_NONE;
+	} else {
+		if (errno == ENOENT) {
+			IOT_DEBUG("file doesn't exist: %s", filename);
+			return IOT_ERROR_FS_NO_FILE;
+		}
+		else{
+			IOT_DEBUG("file open failed [%s]", strerror(errno));
+			return IOT_ERROR_FS_OPEN_FAIL;
+		}
 	}
-
-	handle->fd = fd;
-	snprintf(handle->filename, sizeof(handle->filename), "%s", filename);
-	return IOT_ERROR_NONE;
 }
 
-iot_error_t iot_bsp_fs_open_from_stnv(const char *filename, iot_bsp_fs_handle_t *handle)
+iot_error_t iot_bsp_fs_open_from_stnv(const char* filename, iot_bsp_fs_handle_t* handle)
 {
-	return iot_bsp_fs_open(filename, FS_READONLY, handle);
+	int fd;
+
+	errno = 0;
+	fd = open(filename, O_RDONLY);
+	if (fd > 0) {
+		handle->fd = fd;
+		snprintf(handle->filename, sizeof(handle->filename), "%s", filename);
+		return IOT_ERROR_NONE;
+	} else {
+		if (errno == ENOENT) {
+			IOT_DEBUG("file doesn't exist: %s", filename);
+			return IOT_ERROR_FS_NO_FILE;
+		}
+		else{
+			IOT_DEBUG("file open failed [%s]", strerror(errno));
+			return IOT_ERROR_FS_OPEN_FAIL;
+		}
+	}
 }
 
-iot_error_t iot_bsp_fs_read(iot_bsp_fs_handle_t handle, char *buffer, size_t *length)
+iot_error_t iot_bsp_fs_read(iot_bsp_fs_handle_t handle, char* buffer, size_t *length)
 {
-	int ret;
-	struct stat st;
-	int filelen;
+    char* data;
+    ssize_t size;
 
-	int fd = handle.fd;
-	if (fd < 0) {
+	if (access(handle.filename, F_OK) == -1) {
+		IOT_DEBUG("file does not exist");
 		return IOT_ERROR_FS_NO_FILE;
 	}
 
-	fstat(fd, &st);
-	filelen = st.st_size;
-	ret = read(fd, buffer, filelen);
-	buffer[filelen] = '\0';
-	if (ret <= 0) {
+	data = malloc(*length + 1);
+	if (!data) {
+	    IOT_DEBUG("malloc failed");
+	    return IOT_ERROR_FS_OPEN_FAIL;
+	}
+
+	errno = 0;
+	size = read(handle.fd, data, *length);
+	if (size < 0) {
+		int e = errno;
+		free(data);
+
+		if (e == ENOENT) {
+            IOT_DEBUG("file does not exist (read) [%s]", strerror(e));
+            return IOT_ERROR_FS_NO_FILE;
+        }
+
+		IOT_DEBUG("read fail [%s]", strerror(errno));
 		return IOT_ERROR_FS_READ_FAIL;
 	}
 
-	*length = filelen;
+	memcpy(buffer, data, size);
+	if (size < *length) {
+		buffer[size] = '\0';
+	}
+
+	*length = size;
+
+	free(data);
 
 	return IOT_ERROR_NONE;
 }
 
-iot_error_t iot_bsp_fs_write(iot_bsp_fs_handle_t handle, const char *data, unsigned int length)
+iot_error_t iot_bsp_fs_write(iot_bsp_fs_handle_t handle, const char* data, size_t length)
 {
-	int ret;
-
-	if (handle.fd < 0) {
-		return IOT_ERROR_FS_NO_FILE;
-	}
-
-	/* write 'NULL' to file end */
-	ret = write(handle.fd, data, length+1);
-	if (ret <=0) {
-		return IOT_ERROR_FS_WRITE_FAIL;
-	}
+	ssize_t size = write(handle.fd, data, length);
+	IOT_DEBUG_CHECK(size != length, IOT_ERROR_FS_WRITE_FAIL, "write fail [%s]", strerror(errno));
 
 	return IOT_ERROR_NONE;
 }
 
 iot_error_t iot_bsp_fs_close(iot_bsp_fs_handle_t handle)
 {
-	int ret;
-	if (handle.fd < 0) {
-		return IOT_ERROR_FS_NO_FILE;
-	}
-
-	ret = close(handle.fd);
-	if (ret == -1) {
-		return IOT_ERROR_FS_CLOSE_FAIL;
-	}
+	int ret = close(handle.fd);
+	IOT_DEBUG_CHECK(ret != 0, IOT_ERROR_FS_CLOSE_FAIL, "close fail [%s]", strerror(errno));
 
 	return IOT_ERROR_NONE;
 }
 
-iot_error_t iot_bsp_fs_remove(const char *filename)
+iot_error_t iot_bsp_fs_remove(const char* filename)
 {
-	int ret;
-	if (filename == NULL) {
-		return IOT_ERROR_INVALID_ARGS;
-	}
+	int ret = remove(filename);
 
-	ret = unlink(filename);
-	if (ret < 0) {
-		return IOT_ERROR_FS_REMOVE_FAIL;
-	}
+	IOT_DEBUG_CHECK(((ret != 0) && (errno == ENOENT)), IOT_ERROR_FS_NO_FILE, "remove fail [%s]", strerror(errno));
+	IOT_DEBUG_CHECK(ret != 0, IOT_ERROR_FS_REMOVE_FAIL, "remove fail [%s]", strerror(errno));
+
 	return IOT_ERROR_NONE;
 }

@@ -19,6 +19,8 @@
 
 -include $(TOPDIR)/.config
 -include $(TOPDIR)/Make.defs
+-include $(TOPDIR)/../external/stdk/Make.defs
+
 
 STDK_DIR = ./st-device-sdk-c
 STDK_INCLUDE_DIR = ./st-device-sdk-c/src/include
@@ -50,8 +52,6 @@ CFLAGS += -I$(STDK_DIR)/src/deps/cbor/tinycbor/src
 CFLAGS += -I$(TOPDIR)/kernel
 CFLAGS += -I$(TOPDIR)/../external/include/json
 CFLAGS += -I$(TOPDIR)/../external/include
-CFLAGS += -I$(TOPDIR)/../external/libsodium/libsodium/src/libsodium/include
-CFLAGS += -I$(TOPDIR)/../external/libsodium/port
 CFLAGS += -I$(TOPDIR)/../external/openssl/include
 CFLAGS += -I$(TOPDIR)/include/net
 CFLAGS += -I$(TOPDIR)/include
@@ -92,7 +92,7 @@ endif
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_DISCOVERY_SSID),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/discovery/ssid/*.c)
 else
-CSRCS	+= $(wildcard $(STDK_SRC_DIR)easysetup/discovery/advertiser/*.c)
+CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/discovery/advertiser/*.c)
 endif
 
 #################################################

@@ -1146,7 +1146,7 @@ iot_error_t iot_es_connect(struct iot_context *ctx, int conn_type)
 	}
 
 	if (ctx->rate_limit) {
-		IOT_WARN("Server rate limit break times.. please wai to connect");
+		IOT_WARN("Server rate limit break times.. please wait to connect");
 		return IOT_ERROR_MQTT_CONNECT_FAIL;
 	}
 

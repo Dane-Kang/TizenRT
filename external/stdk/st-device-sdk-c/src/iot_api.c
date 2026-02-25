@@ -250,6 +250,8 @@ iot_error_t iot_state_update(struct iot_context *ctx,
 	struct iot_state_data state_data;
 	iot_error_t err;
 
+	IOT_INFO("new_state : %d", new_state);
+
 	if ((new_state == IOT_STATE_PROV_CONFIRM)
 			&& (opt == IOT_STATE_OPT_NEED_INTERACT)) {
 		IOT_INFO("Trigger PROV_CONFIRM");

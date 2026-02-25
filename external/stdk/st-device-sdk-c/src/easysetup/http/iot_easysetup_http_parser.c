@@ -101,6 +101,7 @@ iot_error_t es_msg_parser(char *rx_buffer, size_t rx_buffer_len, char **payload,
 			IOT_ERROR("[GET] invalid step : %s", uri);
 			*cmd = IOT_EASYSETUP_INVALID_STEP;
 		}
+		IOT_DEBUG("[GET] cmd: %d", *cmd);
 	} else if (!strcmp(method,  "POST")) {
 		int post_content_len = -1;
 		header_t *p_hdr = reqhdr;
@@ -174,7 +175,7 @@ iot_error_t es_msg_parser(char *rx_buffer, size_t rx_buffer_len, char **payload,
 			IOT_ERROR("[POST] invalid step : %s", uri);
 			*cmd = IOT_EASYSETUP_INVALID_STEP;
 		}
-		IOT_DEBUG("cmd: %d, content-length: %d", *cmd, post_content_len);
+		IOT_DEBUG("[POST] cmd: %d, content-length: %d", *cmd, post_content_len);
 	} else {
 		IOT_ERROR("[%s] not support type : %s", prot, method);
 		*type = D2D_ERROR;

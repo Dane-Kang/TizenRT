@@ -44,7 +44,8 @@ switch (curve) {
 		return HAL_KEY_ECC_BRAINPOOL_P384R1;
 	case MBEDTLS_ECP_DP_BP512R1:
 		return HAL_KEY_ECC_BRAINPOOL_P512R1;
-	//case MBEDTLS_ECP_DP_CURVE25519:
+	case MBEDTLS_ECP_DP_CURVE25519:
+		return HAL_KEY_ECC_25519;
 	//case MBEDTLS_ECP_DP_SECP192K1:
 	//case MBEDTLS_ECP_DP_SECP224K1:
 	//case MBEDTLS_ECP_DP_SECP256K1:
@@ -69,6 +70,8 @@ hal_ecdsa_curve alt_get_curve(mbedtls_ecp_group_id curve)
 		return HAL_ECDSA_SEC_P521R1;
 	case MBEDTLS_ECP_DP_BP256R1:
 		return HAL_ECDSA_BRAINPOOL_P256R1;
+	case MBEDTLS_ECP_DP_CURVE25519:
+		return HAL_ECDSA_CURVE_25519;
 	default:
 		break;
 	}

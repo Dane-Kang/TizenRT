@@ -151,9 +151,12 @@ int mbedtls_ecdh_compute_shared(mbedtls_ecp_group *grp, mbedtls_mpi *z, const mb
 		goto cleanup_with_mem;
 	}
 
-	if (!(ecc_pub.pubkey_y->data = (unsigned char *)malloc(ecc_pub.pubkey_y->data_len))) {
-		ret = MBEDTLS_ERR_ECP_ALLOC_FAILED;
-		goto cleanup_with_mem;
+	if(ecc_pub.pubkey_y->data_len != 0){
+		if (!(ecc_pub.pubkey_y->data = (unsigned char *)malloc(ecc_pub.pubkey_y->data_len))) {
+			lldbg("pubkey_y->data alloc failed\n");
+			ret = MBEDTLS_ERR_ECP_ALLOC_FAILED;
+			goto cleanup_with_mem;
+		}
 	}
 
 	MBEDTLS_MPI_CHK(mbedtls_mpi_write_binary(&Q->X, ecc_pub.pubkey_x->data, ecc_pub.pubkey_x->data_len));

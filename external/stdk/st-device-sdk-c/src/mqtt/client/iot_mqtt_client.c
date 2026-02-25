@@ -106,6 +106,8 @@ static void _iot_mqtt_close_net(MQTTClient *client)
 		client->isconnected = 0;
 		port_net_close(client->net_ctx);
 	}
+	IOT_DEBUG("client->isconnected %d", client->isconnected);
+
 	iot_os_mutex_unlock(&client->write_lock);
 	iot_os_mutex_unlock(&client->read_lock);
 
@@ -1014,7 +1016,7 @@ static void _iot_mqtt_listen_socket(void *parm)
 
 	IOT_INFO("Enter Socket listen thread");
 	do {
-		rc = port_net_read_poll(client->net_ctx, PORT_NET_WAIT_FOREVER);
+		rc = port_net_read_poll(client->net_ctx, 2000);
 		if (rc > 0) {
 			rc = _iot_mqtt_run_read_stream(client);
 			if (client->work_queue) {

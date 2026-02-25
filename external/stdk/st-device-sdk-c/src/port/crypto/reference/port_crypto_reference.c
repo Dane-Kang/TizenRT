@@ -21,6 +21,8 @@
 
 #include "mbedtls_helper.h"
 #include "tizenrt_helper.h"
+#include "libsodium_helper.h"
+
 
 iot_error_t port_crypto_sha512(const unsigned char *input, size_t input_len, unsigned char *output, size_t output_len)
 {
@@ -63,7 +65,7 @@ iot_error_t port_crypto_pk_sign(iot_security_pk_params_t *pk_params, iot_securit
 	switch(pk_params->type)
 	{
 		case IOT_SECURITY_KEY_TYPE_ED25519 :
-			return tizenrt_helper_pk_sign_ed25519(pk_params, input_buf, sig_buf);
+			return libsodium_helper_pk_sign_ed25519(pk_params, input_buf, sig_buf);
 		case IOT_SECURITY_KEY_TYPE_RSA2048 :
 			return mbedtls_helper_pk_sign_rsa(pk_params, input_buf, sig_buf);
 		case IOT_SECURITY_KEY_TYPE_ECCP256 :

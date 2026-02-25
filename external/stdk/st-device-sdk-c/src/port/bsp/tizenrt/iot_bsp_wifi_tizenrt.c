@@ -25,12 +25,22 @@
 #include "iot_bsp_wifi.h"
 #include "iot_os_util.h"
 #include "iot_util.h"
+#include <semaphore.h>
+#include <errno.h>
 #ifdef CONFIG_ARCH_BOARD_ESP32_FAMILY
 #include <tinyara/wifi/wifi_utils.h>
 #endif
 #ifdef CONFIG_NETUTILS_NTPCLIENT
 #include <protocols/ntpclient.h>
 #endif
+
+static sem_t g_scan_sem;
+static int g_scan_sem_inited = 0;
+static volatile int g_scan_done = 0;
+
+static sem_t g_connection_sem;
+static int g_connection_sem_inited = 0;
+static volatile int g_connection_done = 0;
 
 typedef struct {
 	uint16_t ap_num;
@@ -146,9 +156,9 @@ void _wm_save_scanlist(wifi_manager_scan_info_s *slist)
 		if (wifi_manager_scan_result.ap_num >= IOT_WIFI_MAX_SCAN_RESULT) {
 			break;
 		}
-		IOT_DEBUG("WiFi AP SSID: %-25s, BSSID: %-20s, Rssi: %d, Auth: %d, Crypto: %d",
-			   slist->ssid, slist->bssid, slist->rssi,
-			   slist->ap_auth_type, slist->ap_crypto_type);
+		// IOT_DEBUG("WiFi AP SSID: %-25s, BSSID: %-20s, Rssi: %d, Auth: %d, Crypto: %d",
+		// 	   slist->ssid, slist->bssid, slist->rssi,
+		// 	   slist->ap_auth_type, slist->ap_crypto_type);
 		slist = slist->next;
 	}
 }
@@ -156,11 +166,15 @@ void _wm_save_scanlist(wifi_manager_scan_info_s *slist)
 void bsp_wm_sta_connected(wifi_manager_cb_msg_s msg, void *arg)
 {
 	IOT_INFO(" T%d --> %s res(%d)", getpid(), __FUNCTION__);
+	g_connection_done = 1;
+    if (g_connection_sem_inited) sem_post(&g_connection_sem);
 }
 
 void bsp_wm_sta_disconnected(wifi_manager_cb_msg_s msg, void *arg)
 {
 	IOT_INFO(" T%d --> %s", getpid(), __FUNCTION__);
+	g_connection_done = 0;
+	if (g_connection_sem_inited) sem_post(&g_connection_sem);
 }
 
 void bsp_wm_softap_sta_join(wifi_manager_cb_msg_s msg, void *arg)
@@ -181,6 +195,8 @@ void bsp_wm_scan_done(wifi_manager_cb_msg_s msg, void *arg)
 	 */
 	if (msg.res != WIFI_MANAGER_SUCCESS || msg.scanlist == NULL) {
 		IOT_INFO(" T%d --> %s", getpid(), __FUNCTION__);
+		g_scan_done = 1;
+        if (g_scan_sem_inited) sem_post(&g_scan_sem);
 		return;
 	}
 	if (g_scan_join == 0) {
@@ -194,6 +210,9 @@ void bsp_wm_scan_done(wifi_manager_cb_msg_s msg, void *arg)
 												&g_scanned_auth_type,
 												&g_scanned_crypto_type);
 	}
+
+	g_scan_done = 1;
+    if (g_scan_sem_inited) sem_post(&g_scan_sem);
 }
 
 /* Global */
@@ -217,6 +236,17 @@ iot_error_t iot_bsp_wifi_init()
 		IOT_INFO(" wifi_manager_init fail");
 		return IOT_ERROR_INIT_FAIL;
 	}
+
+	if (!g_scan_sem_inited) {
+    	sem_init(&g_scan_sem, 0, 0);
+    	g_scan_sem_inited = 1;
+	}
+
+	if (!g_connection_sem_inited) {
+    	sem_init(&g_connection_sem, 0, 0);
+    	g_connection_sem_inited = 1;
+	}
+	g_connection_done = 0;
 
 	/*
 	 * get mac once after wm init, avoid getting mac during wifi provisioning,
@@ -258,11 +288,38 @@ iot_error_t iot_bsp_wifi_set_mode(iot_wifi_conf *conf)
 		case IOT_WIFI_MODE_SCAN:
 			/*stdk first scan on sta mode, and then scan on softap mode.
 			for tizenrt, we only do the first scan, and reuse the result.*/
-			if (_iot_bsp_sta_mode() == 1) {
+			// scan 결과 초기화 (안하면 이전 결과가 남아있을 수 있음)
+			wifi_manager_scan_result.ap_num = 0;
+			memset(wifi_manager_scan_result.wifi_scan_result, 0, sizeof(wifi_manager_scan_result.wifi_scan_result));
+			g_scan_done = 0;
+			// sem 값이 이전에 남아 있을 수 있으니 drain
+			if (g_scan_sem_inited) {
+				while (sem_trywait(&g_scan_sem) == 0) { /* empty */ }
+			}
+
+			//if (_iot_bsp_sta_mode() == 1) {
 					res = wifi_manager_scan_ap(NULL);
 					if (res != WIFI_MANAGER_SUCCESS) {
 						IOT_ERROR("wifi_manager_scan_ap fail");
 						return IOT_ERROR_CONN_OPERATE_FAIL;
+				}
+			//}
+
+			{
+				struct timespec ts;
+				clock_gettime(CLOCK_REALTIME, &ts);
+				ts.tv_sec += 10;
+
+				while (!g_scan_done) {
+					int w = sem_timedwait(&g_scan_sem, &ts);
+					if (w == 0) break;
+					if (errno == EINTR) continue;
+					if (errno == ETIMEDOUT) {
+						IOT_ERROR("WiFi scan timeout");
+						return IOT_ERROR_CONN_OPERATE_FAIL;
+					}
+					IOT_ERROR("sem_timedwait error (%d)", errno);
+					return IOT_ERROR_CONN_OPERATE_FAIL;
 				}
 			}
 		break;
@@ -282,20 +339,20 @@ iot_error_t iot_bsp_wifi_set_mode(iot_wifi_conf *conf)
 			memset(&apconfig, 0 , sizeof(wifi_manager_ap_config_s));
 			apconfig.ssid_length = strlen(conf->ssid);
 			strncpy(apconfig.ssid, conf->ssid, apconfig.ssid_length);
-			apconfig.ssid[apconfig.ssid_length + 1] = '\0';
-
-			apconfig.passphrase_length = strlen(conf->pass);
-			if (apconfig.passphrase_length) {
+			apconfig.ssid[apconfig.ssid_length] = '\0';
+			apconfig.ap_auth_type = conf->authmode;
+			if (conf->authmode != WIFI_MANAGER_AUTH_OPEN) {
+				apconfig.passphrase_length = strlen(conf->pass);
 				strncpy(apconfig.passphrase, conf->pass, apconfig.passphrase_length);
-				apconfig.passphrase[apconfig.passphrase_length + 1] = '\0';
-				apconfig.ap_auth_type = WIFI_MANAGER_AUTH_UNKNOWN;
-				apconfig.ap_crypto_type = WIFI_MANAGER_CRYPTO_UNKNOWN;
+				apconfig.passphrase[apconfig.passphrase_length] = '\0';
+				apconfig.ap_crypto_type = WIFI_MANAGER_CRYPTO_AES;
 			} else {
 				apconfig.passphrase[0] = '\0';
 				apconfig.passphrase_length = 0;
-				apconfig.ap_auth_type = WIFI_MANAGER_AUTH_OPEN;
 				apconfig.ap_crypto_type = WIFI_MANAGER_CRYPTO_NONE;
 			}
+
+			IOT_DEBUG("connect to ap SSID:%s password:%s, auth:%d", apconfig.ssid, apconfig.passphrase, apconfig.ap_auth_type);
 
 			res = wifi_manager_connect_ap(&apconfig);
 			if (res != WIFI_MANAGER_SUCCESS) {
@@ -303,7 +360,21 @@ iot_error_t iot_bsp_wifi_set_mode(iot_wifi_conf *conf)
 				return IOT_ERROR_CONN_CONNECT_FAIL;
 			}
 
-			IOT_DEBUG("connect to ap SSID:%s password:%s", apconfig.ssid, apconfig.passphrase);
+			struct timespec ts;
+			clock_gettime(CLOCK_REALTIME, &ts);
+			ts.tv_sec += 15;
+
+			while (!g_connection_done) {
+				int w = sem_timedwait(&g_connection_sem, &ts);
+				if (w == 0) break;
+				if (errno == EINTR) continue;
+				if (errno == ETIMEDOUT) {
+					IOT_ERROR("WiFi connection timeout");
+					return IOT_ERROR_CONN_OPERATE_FAIL;
+				}
+				IOT_ERROR("sem_timedwait error (%d)", errno);
+				return IOT_ERROR_CONN_OPERATE_FAIL;
+			}
 
 			IOT_INFO("Time is not set yet. Connecting to WiFi and getting time over NTP.");
 			_obtain_time();
@@ -338,17 +409,54 @@ uint16_t iot_bsp_wifi_get_scan_result(iot_wifi_scan_result_t *scan_result)
 	uint16_t ap_num;
 	uint16_t i;
 
+	/*need to initialize the scan buffer before updating*/
+	memset(scan_result, 0x0, (IOT_WIFI_MAX_SCAN_RESULT * sizeof(iot_wifi_scan_result_t)));
+
 	ap_num = wifi_manager_scan_result.ap_num;
 
 	for(i = 0; i < ap_num; i++)	{
-		memcpy(scan_result[i].ssid, wifi_manager_scan_result.wifi_scan_result[i].ssid, strlen((char *)wifi_manager_scan_result.wifi_scan_result[i].ssid));
-		sscanf(wifi_manager_scan_result.wifi_scan_result[i].bssid, "%x:%x:%x:%x:%x:%x",
-			&scan_result[i].bssid[0], &scan_result[i].bssid[1], &scan_result[i].bssid[2],
-			&scan_result[i].bssid[3], &scan_result[i].bssid[4], &scan_result[i].bssid[5]);
+		iot_wifi_auth_mode_t conv_auth_mode;
+		size_t max = IOT_WIFI_MAX_SSID_LEN; // 실제 SSID 최대 길이(널 제외)
+		const char *src = (const char *)wifi_manager_scan_result.wifi_scan_result[i].ssid;
 
+		// 원본이 char[]이지만 안전하게 길이 제한
+		size_t len = strnlen(src, max);
+
+		memcpy(scan_result[i].ssid, src, len);
+		scan_result[i].ssid[len] = '\0'; // uint8_t에도 0 넣으면 동일
+
+		unsigned int b[6];
+		if (sscanf(wifi_manager_scan_result.wifi_scan_result[i].bssid,
+				"%2x:%2x:%2x:%2x:%2x:%2x",
+				&b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) {
+			for (int k = 0; k < 6; k++) {
+				scan_result[i].bssid[k] = (uint8_t)b[k];
+			}
+		} else {
+			memset(scan_result[i].bssid, 0, 6);
+}
+		// sscanf(wifi_manager_scan_result.wifi_scan_result[i].bssid, "%x:%x:%x:%x:%x:%x",
+		// 	&scan_result[i].bssid[0], &scan_result[i].bssid[1], &scan_result[i].bssid[2],
+		// 	&scan_result[i].bssid[3], &scan_result[i].bssid[4], &scan_result[i].bssid[5]);
+
+		switch (wifi_manager_scan_result.wifi_scan_result[i].ap_auth_type) {
+			case WIFI_MANAGER_AUTH_UNKNOWN:
+				conv_auth_mode = IOT_WIFI_AUTH_UNKNOWN;
+				break;
+			case WIFI_MANAGER_AUTH_WPA_AND_WPA2_PSK:
+				conv_auth_mode = IOT_WIFI_AUTH_WPA_WPA2_PSK;
+				break;
+			case WIFI_MANAGER_AUTH_WPA2_AND_WPA3_PSK:
+			case WIFI_MANAGER_AUTH_WPA3_PSK:
+				conv_auth_mode = IOT_WIFI_AUTH_WPA3_PERSONAL;
+				break;
+			default:
+				conv_auth_mode = wifi_manager_scan_result.wifi_scan_result[i].ap_auth_type;
+				break;
+		}
 		scan_result[i].rssi = wifi_manager_scan_result.wifi_scan_result[i].rssi;
 		scan_result[i].freq = iot_util_convert_channel_freq(wifi_manager_scan_result.wifi_scan_result[i].channel);
-		scan_result[i].authmode = wifi_manager_scan_result.wifi_scan_result[i].ap_auth_type;
+		scan_result[i].authmode = conv_auth_mode;
 	}
 
 	return ap_num;

@@ -18,4 +18,29 @@
 
 ifeq ($(CONFIG_STDK_IOT_CORE),y)
 CONFIGURED_EXT += stdk
+
+# ============================================================
+# stdk libsodium : build libsodium objects as part of libexternal.a
+# ============================================================
+
+# SDK root inside stdk module
+STDK_SDK_DIR      := $(TOPDIR)/../external/stdk/st-device-sdk-c
+LIBSODIUM_DIR     := $(STDK_SDK_DIR)/src/deps/libsodium
+LIBSODIUM_SRCDIR  := $(LIBSODIUM_DIR)/libsodium/src/libsodium
+
+# Add libsodium sources to external build
+CSRCS += $(shell find $(LIBSODIUM_SRCDIR) -name '*.c')
+
+# Add include paths
+CFLAGS += -I$(LIBSODIUM_SRCDIR)/include \
+          -I$(LIBSODIUM_SRCDIR)/include/sodium \
+          -I$(LIBSODIUM_DIR)/port/include \
+          -I$(LIBSODIUM_DIR)/port/include/sodium \
+          -I$(LIBSODIUM_SRCDIR)
+
+# Add required defines (same as you used in libsodium Makefile)
+CFLAGS += -DCONFIGURED -DNATIVE_LITTLE_ENDIAN -DHAVE_WEAK_SYMBOLS \
+          -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS
+
 endif
+

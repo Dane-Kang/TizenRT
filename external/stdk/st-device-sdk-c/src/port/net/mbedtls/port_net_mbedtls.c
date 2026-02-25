@@ -398,7 +398,7 @@ int port_net_read(PORT_NET_CONTEXT ctx, void *buf, size_t len)
 		return -1;
 	}
 
-	IOT_DEBUG("%d@%p", len, buf);
+	IOT_DEBUG("%d@%p, tls_connection %d", len, buf, _ctx->is_tls_connection);
 	if (_ctx->is_tls_connection) {
 		ret = mbedtls_ssl_read(&_ctx->ssl, buf, len);
 
@@ -432,6 +432,8 @@ int port_net_read_poll(PORT_NET_CONTEXT ctx, unsigned int wait_time_ms)
 	}
 
 	socket = _ctx->sock_fd.fd;
+	if (socket < 0) return -1;
+
 	FD_ZERO(&fdset);
 	FD_SET(socket, &fdset);
 	if (wait_time_ms == PORT_NET_WAIT_FOREVER) {

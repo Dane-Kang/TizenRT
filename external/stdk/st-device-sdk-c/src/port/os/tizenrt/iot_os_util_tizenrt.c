@@ -116,158 +116,240 @@ int iot_os_thread_get_current_handle(iot_os_thread* thread_handle)
     *thread_handle = (iot_os_thread)pthread_self();
     return IOT_OS_TRUE;
 }
-
-/* Event Group */
+/* Event Group (pipe/select 제거 버전) */
 #define EVENT_MAX 8
 
 typedef struct {
-	unsigned char id;
-	int fd[2];
+    unsigned char id;       // 1<<i
+    unsigned int  pending;  // 해당 이벤트가 몇 번 set 되었는지(큐 대체)
 } event_t;
 
 typedef struct {
-	event_t group[EVENT_MAX];
-	unsigned char event_status;
-	pthread_mutex_t mutex;
+    event_t group[EVENT_MAX];
+    unsigned char event_status;   // 현재 set된 비트 상태
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;         // "어떤 이벤트든 발생" 깨움용
 } eventgroup_t;
+
+static inline int _is_bit_in_mask(unsigned char bit, unsigned char mask)
+{
+    return (bit == (unsigned char)(bit & mask));
+}
 
 iot_os_eventgroup* iot_os_eventgroup_create(void)
 {
-	eventgroup_t *eventgroup = malloc(sizeof(eventgroup_t));
-	if (eventgroup == NULL)
-		return NULL;
+    eventgroup_t *eventgroup = (eventgroup_t*)malloc(sizeof(eventgroup_t));
+    if (eventgroup == NULL)
+        return NULL;
 
-	if (pthread_mutex_init(&eventgroup->mutex, NULL)) {
-		free(eventgroup);
-		return NULL;
-	}
+    memset(eventgroup, 0, sizeof(*eventgroup));
 
-	for (int i = 0; i < EVENT_MAX; i++) {
-		eventgroup->group[i].id = (1 << i);
-		int ret = pipe(eventgroup->group[i].fd);
-		if (ret == -1) {
-			free(eventgroup);
-			return NULL;
-		}
-	}
+    if (pthread_mutex_init(&eventgroup->mutex, NULL)) {
+        free(eventgroup);
+        return NULL;
+    }
+    if (pthread_cond_init(&eventgroup->cond, NULL)) {
+        pthread_mutex_destroy(&eventgroup->mutex);
+        free(eventgroup);
+        return NULL;
+    }
 
-	eventgroup->event_status = 0;
+    IOT_DEBUG("EG create %p", eventgroup);
 
-	return eventgroup;
+    for (int i = 0; i < EVENT_MAX; i++) {
+        eventgroup->group[i].id = (1 << i);
+        eventgroup->group[i].pending = 0;
+    }
+
+    eventgroup->event_status = 0;
+    return (iot_os_eventgroup*)eventgroup;
 }
 
 void iot_os_eventgroup_delete(iot_os_eventgroup* eventgroup_handle)
 {
-	eventgroup_t* eventgroup = eventgroup_handle;
+    eventgroup_t* eventgroup = (eventgroup_t*)eventgroup_handle;
+    if (!eventgroup) return;
 
-	for (int i = 0; i < EVENT_MAX; i++) {
-		close(eventgroup->group[i].fd[0]);
-		close(eventgroup->group[i].fd[1]);
-	}
-	pthread_mutex_destroy(&eventgroup->mutex);
-	free(eventgroup);
+    IOT_DEBUG("deleted eventgroup %p", eventgroup);
+
+    pthread_cond_destroy(&eventgroup->cond);
+    pthread_mutex_destroy(&eventgroup->mutex);
+    free(eventgroup);
+}
+
+static unsigned long long _now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL + (unsigned long long)ts.tv_nsec / 1000000ULL;
+}
+
+static int _cond_timedwait_abs_ms(pthread_cond_t *cond, pthread_mutex_t *mtx, unsigned long long abs_deadline_ms)
+{
+    struct timespec ts;
+    ts.tv_sec  = (time_t)(abs_deadline_ms / 1000ULL);
+    ts.tv_nsec = (long)((abs_deadline_ms % 1000ULL) * 1000000ULL);
+
+    int r;
+    do {
+        r = pthread_cond_timedwait(cond, mtx, &ts);
+    } while (r == EINTR);
+
+    return (r == 0) ? 0 : -1; // timeout(ETIMEDOUT) 포함
 }
 
 unsigned char iot_os_eventgroup_wait_bits(iot_os_eventgroup* eventgroup_handle,
-		const unsigned char bits_to_wait_for, const int clear_on_exit, const unsigned int wait_time_ms)
+        const unsigned char bits_to_wait_for, const int clear_on_exit, const unsigned int wait_time_ms)
 {
-	eventgroup_t *eventgroup = eventgroup_handle;
-	fd_set readfds;
-	int fd_max = 0;
-	unsigned char event_status_backup;
+    eventgroup_t *eventgroup = (eventgroup_t*)eventgroup_handle;
+    if (!eventgroup) return 0;
 
-	FD_ZERO(&readfds);
+    unsigned long long deadline_ms = 0;
+    if (wait_time_ms != iot_os_max_delay) {
+        deadline_ms = _now_ms() + (unsigned long long)wait_time_ms;
+    }
 
-	for (int i = 0; i < EVENT_MAX; i++) {
-		if (eventgroup->group[i].id == (eventgroup->group[i].id & bits_to_wait_for)) {
-			FD_SET(eventgroup->group[i].fd[0], &readfds);
-			if (eventgroup->group[i].fd[0] >= fd_max) {
-				fd_max = eventgroup->group[i].fd[0];
-			}
-		}
-	}
+    pthread_mutex_lock(&eventgroup->mutex);
 
-	char buf[3] = {0,};
-	struct timeval tv;
-	memset(&tv, 0x00, sizeof(tv));
-	unsigned char bits = 0x00;
-	ssize_t read_size = 0;
+    while (1) {
+        // 1) 내가 기다리는 마스크에서 "실제로 발생한 이벤트"를 찾는다 (pending 우선)
+        unsigned char hit_bits = 0x00;
 
-	tv.tv_sec = wait_time_ms / 1000;
-	tv.tv_usec = (wait_time_ms % 1000) * 1000;
+        for (int i = 0; i < EVENT_MAX; i++) {
+            unsigned char id = eventgroup->group[i].id;
+            if ((bits_to_wait_for & id) == id) {
+                if (eventgroup->group[i].pending > 0 ||
+                    (eventgroup->event_status & id)) {
+                    hit_bits |= id;
+                }
+            }
+        }
 
-	int ret = select(fd_max + 1, &readfds, NULL, NULL, &tv);
-	pthread_mutex_lock(&eventgroup->mutex);
-	if (ret == -1) {
-		// Select Error
-		pthread_mutex_unlock(&eventgroup->mutex);
-		return 0;
-	} else if (ret == 0) {
-		// Select Timeout
-		pthread_mutex_unlock(&eventgroup->mutex);
-		return (unsigned int)eventgroup->event_status;
-	} else {
-		// read pipe
-		for (int i = 0; i < EVENT_MAX; i++) {
-			if (eventgroup->group[i].id == (eventgroup->group[i].id & bits_to_wait_for)) {
-				if (FD_ISSET(eventgroup->group[i].fd[0], &readfds)) {
-					memset(buf, 0, sizeof(buf));
-					read_size = read(eventgroup->group[i].fd[0], buf, sizeof(buf));
-					IOT_DEBUG("read_size = %d (%d)", read_size, i);
-					bits |= eventgroup->group[i].id;
-				}
-			}
-		}
+        // 2) hit가 있으면 정상 반환 준비
+        if (hit_bits != 0x00) {
+            unsigned char event_status_backup = eventgroup->event_status;
 
-		event_status_backup = eventgroup->event_status;
-		if (clear_on_exit) {
-			eventgroup->event_status &= ~(bits);
-		}
-		pthread_mutex_unlock(&eventgroup->mutex);
+            if (clear_on_exit) {
+                // hit된 이벤트 각각에 대해 "1회 소비"
+                for (int i = 0; i < EVENT_MAX; i++) {
+                    unsigned char id = eventgroup->group[i].id;
+                    if (hit_bits & id) {
+                        if (eventgroup->group[i].pending > 0) {
+                            eventgroup->group[i].pending--;
+                        }
+                    }
+                }
 
-		return (unsigned int)event_status_backup;
-	}
+                // pending이 0이면 status bit clear, 남아있으면 유지
+                for (int i = 0; i < EVENT_MAX; i++) {
+                    unsigned char id = eventgroup->group[i].id;
+                    if (hit_bits & id) {
+                        if (eventgroup->group[i].pending == 0) {
+                            eventgroup->event_status &= (unsigned char)(~id);
+                        } else {
+                            eventgroup->event_status |= id;
+                        }
+                    }
+                }
+            }
+
+            pthread_mutex_unlock(&eventgroup->mutex);
+            return event_status_backup;
+        }
+
+        // 3) hit가 없으면 계속 기다린다
+        if (wait_time_ms == iot_os_max_delay) {
+            // 무한대기: 원하는 이벤트가 올 때까지 계속 wait
+            int r;
+            do {
+                r = pthread_cond_wait(&eventgroup->cond, &eventgroup->mutex);
+            } while (r == EINTR);
+            // 깨어나면 while(1) 루프 처음으로 돌아가서 조건 재검사
+            continue;
+        } else {
+            // 타임아웃 대기: deadline까지
+            unsigned long long now = _now_ms();
+            if (now >= deadline_ms) {
+                // 타임아웃: 기존 코드 정책대로 현재 status 반환
+                unsigned char ret = eventgroup->event_status;
+                pthread_mutex_unlock(&eventgroup->mutex);
+                return ret;
+            }
+
+            if (_cond_timedwait_abs_ms(&eventgroup->cond, &eventgroup->mutex, deadline_ms) != 0) {
+                // timedwait timeout/err -> 현재 status 반환
+                unsigned char ret = eventgroup->event_status;
+                pthread_mutex_unlock(&eventgroup->mutex);
+                return ret;
+            }
+            // 깨어나면 while 루프 재검사
+            continue;
+        }
+    }
 }
 
 int iot_os_eventgroup_set_bits(iot_os_eventgroup* eventgroup_handle,
-		const unsigned char bits_to_set)
+        const unsigned char bits_to_set)
 {
-	eventgroup_t *eventgroup = eventgroup_handle;
-	unsigned char bits = 0;
-	ssize_t write_size = 0;
+    eventgroup_t *eventgroup = (eventgroup_t*)eventgroup_handle;
+    if (!eventgroup) return IOT_OS_FALSE;
 
-	pthread_mutex_lock(&eventgroup->mutex);
-	for (int i = 0; i < EVENT_MAX; i++) {
-        if (eventgroup->group[i].id == (eventgroup->group[i].id & eventgroup->event_status)) {
-            IOT_DEBUG("already set 0x%08x (%d)", eventgroup->group[i].id, i);
-            continue;
+    IOT_DEBUG("EG set %p bits=0x%02x", eventgroup, bits_to_set);
+
+    pthread_mutex_lock(&eventgroup->mutex);
+
+    unsigned char newly_set_any = 0;
+
+    for (int i = 0; i < EVENT_MAX; i++) {
+        unsigned char id = eventgroup->group[i].id;
+
+        if (_is_bit_in_mask(id, bits_to_set)) {
+            // 기존 pipe write처럼 "이벤트 발생 1회"를 누적
+            eventgroup->group[i].pending++;
+
+            // 상태 비트 set
+            if (!(eventgroup->event_status & id)) {
+                eventgroup->event_status |= id;
+                newly_set_any = 1;
+            } else {
+                // 이미 set되어 있어도 pending이 증가했으니 깨워야 하는 경우가 많음
+                newly_set_any = 1;
+            }
         }
-		if (eventgroup->group[i].id == (eventgroup->group[i].id & bits_to_set)) {
-			write_size = write(eventgroup->group[i].fd[1], "Set", strlen("Set"));
-			IOT_DEBUG("write_size = %d (%d)", write_size, i);
-			bits |= eventgroup->group[i].id;
-		}
-	}
+    }
 
-	eventgroup->event_status |= bits;
-	pthread_mutex_unlock(&eventgroup->mutex);
+    // 기다리는 애들 깨우기 (select 대체)
+    if (newly_set_any) {
+        pthread_cond_broadcast(&eventgroup->cond);
+    }
 
-	return IOT_OS_TRUE;
+    pthread_mutex_unlock(&eventgroup->mutex);
+
+    return IOT_OS_TRUE;
 }
 
 int iot_os_eventgroup_clear_bits(iot_os_eventgroup* eventgroup_handle,
-		const unsigned char bits_to_clear)
+        const unsigned char bits_to_clear)
 {
-    eventgroup_t *eventgroup = eventgroup_handle;
+    eventgroup_t *eventgroup = (eventgroup_t*)eventgroup_handle;
+    if (!eventgroup) return IOT_OS_FALSE;
 
-	pthread_mutex_lock(&eventgroup->mutex);
-    eventgroup->event_status &= ~(bits_to_clear);
-    // TODO: clear written event to pipe
-	pthread_mutex_unlock(&eventgroup->mutex);
+    pthread_mutex_lock(&eventgroup->mutex);
 
-	return IOT_OS_TRUE;
+    // status clear
+    eventgroup->event_status &= (unsigned char)(~bits_to_clear);
+
+    // pipe의 "쌓인 데이터"에 해당하는 pending도 같이 정리
+    for (int i = 0; i < EVENT_MAX; i++) {
+        unsigned char id = eventgroup->group[i].id;
+        if (bits_to_clear & id) {
+            eventgroup->group[i].pending = 0;
+        }
+    }
+
+    pthread_mutex_unlock(&eventgroup->mutex);
+    return IOT_OS_TRUE;
 }
-
 /* Mutex */
 static void *recursive_mutex_create_wrapper(void)
 {

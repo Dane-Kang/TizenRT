@@ -102,35 +102,95 @@ static int ensure_seclink(void)
     return 0;
 }
 
+/*
+ * Simple Base64 decoder (RFC 4648, standard base64)
+ * - Supports '=' padding
+ * - Does NOT support base64url ('-' '_' variants)
+ * Returns decoded length, or -1 on error.
+ */
+static int tizenrt_base64_decode(const char *b64, uint8_t *out, size_t out_max)
+{
+    static const int8_t T[256] = {
+        /* initialize all to -1 */
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63, /* +,/ */
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-2,-1,-1, /* 0-9, '=' -> -2 */
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        /* rest are -1 */
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    };
+
+    size_t len = strlen(b64);
+    size_t out_len = 0;
+
+    int val = 0;
+    int valb = -8;
+    int padding_seen = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)b64[i];
+        if (c == '\r' || c == '\n' || c == ' ' || c == '\t') continue; // ignore whitespace
+
+        int8_t d = T[c];
+        if (d == -1) return -1; // invalid char
+
+        if (d == -2) { // '=' padding
+            padding_seen = 1;
+            continue;
+        }
+        if (padding_seen) {
+            // data after '=' is invalid in strict base64
+            return -1;
+        }
+
+        val = (val << 6) + d;
+        valb += 6;
+
+        if (valb >= 0) {
+            if (out_len >= out_max) return -1;
+            out[out_len++] = (uint8_t)((val >> valb) & 0xFF);
+            valb -= 8;
+        }
+    }
+
+    return (int)out_len;
+}
+
 iot_error_t set_st_device_key(void)
 {
     int ret = IOT_ERROR_NONE;
-    // "privateKey": "jHqh8Xqx3wXxJSd3PjzfNnJp+qEHxw4GirVuKfC/1iA=",
-	// "publicKey": "SRVNDuXGgXLrbOh1izRkXMmKbi6bmpzsjDh19X8UnOY=",
-#if SWAP_KEY
-    uint8_t ed25519_privkey[] = {
-        0x20, 0xd6, 0xbf, 0xf0, 0x29, 0x6e, 0xb5, 0x8a,
-        0x06, 0x0e, 0xc7, 0x07, 0xa1, 0xfa, 0x69, 0x72,
-        0x36, 0xdf, 0x3c, 0x3e, 0x77, 0x27, 0x25, 0xf1,
-        0x05, 0xdf, 0xb1, 0x7a, 0xf1, 0xa1, 0x7a, 0x8c};
-    uint8_t ed25519_pubkey[] = {
-        0xe6, 0x9c, 0x14, 0x7f, 0xf5, 0x75, 0x38, 0x8c,
-        0xec, 0x9c, 0x9a, 0x9b, 0x2e, 0x6e, 0x8a, 0xc9,
-        0x5c, 0x64, 0x34, 0x8b, 0x75, 0xe8, 0x6c, 0xeb,
-        0x72, 0x81, 0xc6, 0xe5, 0x0e, 0x4d, 0x15, 0x49
-    };
-#else
-    uint8_t ed25519_privkey[] = {
-        0x8c, 0x7a, 0xa1, 0xf1, 0x7a, 0xb1, 0xdf, 0x05,
-        0xf1, 0x25, 0x27, 0x77, 0x3e, 0x3c, 0xdf, 0x36,
-        0x72, 0x69, 0xfa, 0xa1, 0x07, 0xc7, 0x0e, 0x06,
-        0x8a, 0xb5, 0x6e, 0x29, 0xf0, 0xbf, 0xd6, 0x20};
-    uint8_t ed25519_pubkey[] = {
-        0x49, 0x15, 0x4d, 0x0e, 0xe5, 0xc6, 0x81, 0x72,
-        0xeb, 0x6c, 0xe8, 0x75, 0x8b, 0x34, 0x64, 0x5c,
-        0xc9, 0x8a, 0x6e, 0x2e, 0x9b, 0x9a, 0x9c, 0xec,
-        0x8c, 0x38, 0x75, 0xf5, 0x7f, 0x14, 0x9c, 0xe6};
-#endif
+
+    const char *priv_b64 = "jHqh8Xqx3wXxJSd3PjzfNnJp+qEHxw4GirVuKfC/1iA=";
+    const char *pub_b64  = "SRVNDuXGgXLrbOh1izRkXMmKbi6bmpzsjDh19X8UnOY=";
+
+    uint8_t ed25519_privkey[128] = {0};
+    uint8_t ed25519_pubkey[128]  = {0};
+
+    int priv_len = tizenrt_base64_decode(priv_b64, ed25519_privkey, sizeof(ed25519_privkey));
+    int pub_len  = tizenrt_base64_decode(pub_b64,  ed25519_pubkey,  sizeof(ed25519_pubkey));
+
+    if (priv_len < 0) {
+        printf("tizenrt_base64_decode failed for priv_b64\n");
+        return IOT_ERROR_SECURITY_PK_SIGN;
+    }
+    if (pub_len < 0) {
+        printf("tizenrt_base64_decode failed for pub_b64\n");
+        return IOT_ERROR_SECURITY_PK_SIGN;
+    }
+    tizenrt_print_buffer(ed25519_privkey, priv_len, "ed25519_privkey");
+    tizenrt_print_buffer(ed25519_pubkey, pub_len, "ed25519_pubkey");
+
     hal_data priv_key = { 0 };
     hal_data pub_key = { 0 };
     priv_key.data = ed25519_privkey;
@@ -207,137 +267,12 @@ iot_error_t convert_ed25519_to_ecc25519(unsigned char* data, iot_security_buffer
     return ret;
 }
 
-iot_error_t tizenrt_helper_pk_sign_ed25519(iot_security_pk_params_t *pk_params, iot_security_buffer_t *input_buf, iot_security_buffer_t *sig_buf)
-{
-	if (ensure_seclink() < 0) {
-        return IOT_ERROR_SECURITY_PK_SIGN;
-    }
-
-	if (!pk_params->pubkey.p || (pk_params->pubkey.len != ED25519_PUB_LEN)) {
-		IOT_ERROR("pubkey is invalid with %d@%p", (int)pk_params->pubkey.len, pk_params->pubkey.p);
-		return IOT_ERROR_SECURITY_PK_INVALID_PUBKEY;
-	}
-
-	if (!pk_params->seckey.p || (pk_params->seckey.len != ED25519_PRIV_LEN)) {
-		IOT_ERROR("seckey is invalid with %d@%p", (int)pk_params->seckey.len, pk_params->seckey.p);
-		return IOT_ERROR_SECURITY_PK_INVALID_SECKEY;
-	}
-	
-	hal_data pub_key  = { pk_params->pubkey.p, pk_params->pubkey.len, NULL, 0 };
-    hal_data priv_key = { pk_params->seckey.p, pk_params->seckey.len, NULL, 0 };
-
-	IOT_DEBUG("input:  %3d@%p", (int)input_buf->len, input_buf->p);
-	IOT_DEBUG("seckey: %3d@%p", (int)pk_params->seckey.len, pk_params->seckey.p);
-	IOT_DEBUG("pubkey: %3d@%p", (int)pk_params->pubkey.len, pk_params->pubkey.p);
-
-	// 키를 slot에 로드
-    if (sl_set_key(g_st_hnd, HAL_KEY_ED_25519, RW_SLOT_ENTRY, &pub_key, &priv_key) != SECLINK_OK) {
-        IOT_ERROR("sl_set_key failed");
-        return IOT_ERROR_SECURITY_PK_SIGN;
-    }
-
-	sig_buf->len = ED25519_SIG_LEN;
-	sig_buf->p = (unsigned char *)iot_os_malloc(sig_buf->len);
-	if (!sig_buf->p) {
-		IOT_ERROR("malloc sig failed");
-        sl_remove_key(g_st_hnd, HAL_KEY_ED_25519, RW_SLOT_ENTRY);
-		return IOT_ERROR_SECURITY_MEM_ALLOC;
-	}
-
-	hal_data in  = { input_buf->p, input_buf->len, NULL, 0 };
-    hal_data sig = { sig_buf->p, sig_buf->len, NULL, 0 };
-
-	hal_ecdsa_mode mode;
-    memset(&mode, 0, sizeof(mode));
-    mode.curve  = HAL_ECDSA_CURVE_25519;
-    mode.hash_t = HAL_HASH_SHA512;
-
-	int ret = sl_ecdsa_sign_md(g_st_hnd, mode, &in, RW_SLOT_ENTRY, &sig);
-
-    // 키 제거 (slot 고정 사용 시 충돌 방지)
-    sl_remove_key(g_st_hnd, HAL_KEY_ED_25519, RW_SLOT_ENTRY);
-
-    if (ret != SECLINK_OK) {
-        IOT_ERROR("sl_ecdsa_sign_md failed: %d", ret);
-        iot_security_buffer_free(sig_buf);
-        return IOT_ERROR_SECURITY_PK_SIGN;
-    }
-
-    // seclink가 실제 길이를 갱신하는 경우를 대비
-    if (sig.data_len != 0 && sig.data_len != sig_buf->len) {
-        // Ed25519면 보통 64여야 정상. 다르면 플랫폼 반환 포맷 확인 필요.
-        IOT_ERROR("signature length mismatch: %d", (int)sig.data_len);
-        iot_security_buffer_free(sig_buf);
-        return IOT_ERROR_SECURITY_PK_KEY_LEN;
-    }
-
-	IOT_DEBUG("sig:    %3d@%p", (int)sig_buf->len, sig_buf->p);
-    sl_deinit(&g_st_hnd);
-    g_seclink_inited = 0;
-	return IOT_ERROR_NONE;
-}
-
-iot_error_t tizenrt_helper_pk_verify_ed25519(iot_security_pk_params_t *pk_params, iot_security_buffer_t *input_buf, iot_security_buffer_t *sig_buf)
-{
-	if (ensure_seclink() < 0) {
-        return IOT_ERROR_SECURITY_PK_VERIFY;
-    }
-
-    if (!sig_buf->p || sig_buf->len != ED25519_SIG_LEN) {
-        IOT_ERROR("sig invalid: %d", (int)sig_buf->len);
-        return IOT_ERROR_SECURITY_PK_KEY_LEN;
-    }
-
-    if (!pk_params->pubkey.p || (pk_params->pubkey.len != ED25519_PUB_LEN)) {
-		IOT_ERROR("pubkey is invalid with %d@%p", (int)pk_params->pubkey.len, pk_params->pubkey.p);
-		return IOT_ERROR_SECURITY_PK_INVALID_PUBKEY;
-	}
-
-	if (!pk_params->seckey.p || (pk_params->seckey.len != ED25519_PRIV_LEN)) {
-		IOT_ERROR("seckey is invalid with %d@%p", (int)pk_params->seckey.len, pk_params->seckey.p);
-		return IOT_ERROR_SECURITY_PK_INVALID_SECKEY;
-	}
-	
-	hal_data pub_key  = { pk_params->pubkey.p, pk_params->pubkey.len, NULL, 0 };
-    hal_data priv_key = { pk_params->seckey.p, pk_params->seckey.len, NULL, 0 };
-
-    // verify는 priv 없어도 되지만, API가 set_key에 priv를 요구하면 NULL로 가능 여부 확인 필요
-    if (sl_set_key(g_st_hnd, HAL_KEY_ED_25519, RW_SLOT_ENTRY, &pub_key, NULL) != SECLINK_OK) {
-        // 어떤 seclink 구현은 pub/priv 둘 다 요구할 수 있음.
-        // 그 경우 pk_params->seckey가 있다면 priv도 같이 넣어주세요.
-        IOT_ERROR("sl_set_key(pub only) failed");
-        return IOT_ERROR_SECURITY_PK_VERIFY;
-    }
-
-    hal_data in  = { input_buf->p, input_buf->len, NULL, 0 };
-    hal_data sig = { sig_buf->p, sig_buf->len, NULL, 0 };
-
-    hal_ecdsa_mode mode;
-    memset(&mode, 0, sizeof(mode));
-    mode.curve  = HAL_ECDSA_CURVE_25519;
-    mode.hash_t = HAL_HASH_SHA512;
-
-    int ret = sl_ecdsa_verify_md(g_st_hnd, mode, &in, &sig, RW_SLOT_ENTRY);
-
-    sl_remove_key(g_st_hnd, HAL_KEY_ED_25519, RW_SLOT_ENTRY);
-
-    if (ret != SECLINK_OK) {
-        IOT_ERROR("sl_ecdsa_verify_md failed: %d", ret);
-        return IOT_ERROR_SECURITY_PK_VERIFY;
-    }
-
-	IOT_DEBUG("sign verify success");
-    sl_deinit(&g_st_hnd);
-    g_seclink_inited = 0;
-	return IOT_ERROR_NONE;
-}
-
 iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(mbedtls_ecp_group *grp, mbedtls_mpi *z, const mbedtls_ecp_point *Q, const mbedtls_mpi *d, int (*f_rng)(void *, unsigned char *, size_t), void *p_rng)
 {
     iot_error_t err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
     int ret;
     hal_ecdh_data ecc_pub = {0,};
-	unsigned char shared_secret_data[256];
+	unsigned char shared_secret_data[256] = {0};
 	hal_data shared_secret = {shared_secret_data, 256, NULL, 0};
 	hal_key_type key_type = HAL_KEY_ED_25519;
 
@@ -369,10 +304,12 @@ iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(mbedtls_ecp_group *grp, mb
 		goto cleanup_with_mem;
 	}
 
-	if (!(ecc_pub.pubkey_y->data = (unsigned char *)malloc(ecc_pub.pubkey_y->data_len))) {
-		ret = MBEDTLS_ERR_ECP_ALLOC_FAILED;
-		goto cleanup_with_mem;
-	}
+    if(ecc_pub.pubkey_y->data_len != 0){
+        if (!(ecc_pub.pubkey_y->data = (unsigned char *)malloc(ecc_pub.pubkey_y->data_len))) {
+            ret = MBEDTLS_ERR_ECP_ALLOC_FAILED;
+            goto cleanup_with_mem;
+        }
+    }
 
 
 	ret = mbedtls_mpi_write_binary(&Q->MBEDTLS_PRIVATE(X), ecc_pub.pubkey_x->data, ecc_pub.pubkey_x->data_len);
@@ -382,7 +319,7 @@ iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(mbedtls_ecp_group *grp, mb
 		goto cleanup_with_mem;
 	}
 
-    sl_print_buffer(ecc_pub.pubkey_x->data, ecc_pub.pubkey_x->data_len, "ecc_pub.pubkey_x key");
+    tizenrt_print_buffer(ecc_pub.pubkey_x->data, ecc_pub.pubkey_x->data_len, "ecc_pub.pubkey_x key");
 
 	ret = mbedtls_mpi_write_binary(&Q->MBEDTLS_PRIVATE(Y), ecc_pub.pubkey_y->data, ecc_pub.pubkey_y->data_len);
     if (ret) {
@@ -405,7 +342,7 @@ iot_error_t tizenrt_helper_ecdh_compute_shared_x25519(mbedtls_ecp_group *grp, mb
 		goto cleanup_with_mem;
 	}
     
-    sl_print_buffer(shared_secret.data, shared_secret.data_len, "result shared key");
+    //tizenrt_print_buffer(shared_secret.data, shared_secret.data_len, "shared key");
 
 	ret = mbedtls_mpi_read_binary(z, shared_secret.data, shared_secret.data_len);
     if (ret) {

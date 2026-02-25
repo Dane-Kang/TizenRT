@@ -152,60 +152,6 @@ static void iot_noti_cb(iot_noti_data_t *noti_data, void *noti_usr_data)
     }
 }
 
-void button_event(IOT_CAP_HANDLE *handle, int type, int count)
-{
-    if (type == BUTTON_SHORT_PRESS) {
-        printf("Button short press, count: %d\n", count);
-        switch(count) {
-            case 1:
-                if (g_iot_status == IOT_STATUS_NEED_INTERACT) {
-                    st_conn_ownership_confirm(iot_ctx, true);
-                    noti_led_mode = LED_ANIMATION_MODE_IDLE;
-                    change_switch_state(get_switch_state());
-                } else {
-                    if (get_switch_state() == SWITCH_ON) {
-                        change_switch_state(SWITCH_OFF);
-                        cap_switch_data->set_switch_value(cap_switch_data, caps_helper_switch.attr_switch.value_off);
-                        cap_switch_data->attr_switch_send(cap_switch_data);
-                    } else {
-                        change_switch_state(SWITCH_ON);
-                        cap_switch_data->set_switch_value(cap_switch_data, caps_helper_switch.attr_switch.value_on);
-                        cap_switch_data->attr_switch_send(cap_switch_data);
-                    }
-                }
-                break;
-            case 5:
-                /* clean-up provisioning & registered data with reboot option*/
-                st_conn_cleanup(iot_ctx, true);
-
-                break;
-            default:
-                break;
-        }
-    } else if (type == BUTTON_LONG_PRESS) {
-        printf("Button long press, iot_status: %d\n", g_iot_status);
-        st_conn_cleanup(iot_ctx, false);
-		kernel_thread("connection_task", 100, 2048, (main_t)connection_start_task, NULL);
-    }
-}
-
-int app_st_main_task(int argc, char *argv[])
-{
-    IOT_CAP_HANDLE *handle = (IOT_CAP_HANDLE *)argv;
-
-    int button_event_type;
-    int button_event_count;
-    printf("[%s][%d][Task Debug]enter app_main_task\r\n", __func__, __LINE__);
-    for (;;) {
-        if (get_button_event(&button_event_type, &button_event_count)) {
-            button_event(handle, button_event_type, button_event_count);
-        }
-
-        usleep(10 * 1000);
-    }
-
-    return 0;
-}
 
 int smart_lamp_main(int argc, char *argv[])
 {
@@ -230,24 +176,30 @@ int smart_lamp_main(int argc, char *argv[])
      */
 
     int iot_err;
+    if(argc >= 2){
+        if(!strcmp(argv[1],"confirm")){
+            printf("Do the easysetup confirm\n");
+            //if (g_iot_status == IOT_STATUS_NEED_INTERACT) {
+                st_conn_ownership_confirm(iot_ctx, true);
+                noti_led_mode = LED_ANIMATION_MODE_IDLE;
+            //}
+        }
+    }else{
+        // create a iot context
+        iot_ctx = st_conn_init(onboarding_config, onboarding_config_len, device_info, device_info_len);
+        if (iot_ctx != NULL) {
+            iot_err = st_conn_set_noti_cb(iot_ctx, iot_noti_cb, NULL);
+            if (iot_err)
+                printf("fail to set notification callback function\n");
+        } else {
+            printf("fail to create the iot_context\n");
+        }
 
-    // create a iot context
-    iot_ctx = st_conn_init(onboarding_config, onboarding_config_len, device_info, device_info_len);
-    if (iot_ctx != NULL) {
-        iot_err = st_conn_set_noti_cb(iot_ctx, iot_noti_cb, NULL);
-        if (iot_err)
-            printf("fail to set notification callback function\n");
-    } else {
-        printf("fail to create the iot_context\n");
+        // create a handle to process capability and initialize capability info
+        capability_init();
+
+        // connect to server
+        connection_start();
     }
-
-    // create a handle to process capability and initialize capability info
-    capability_init();
-
-    iot_gpio_init();
-	//kernel_thread("app_st_main_task", 100, 4096, (main_t)app_st_main_task, NULL);
-
-    // connect to server
-    connection_start();
     return 0;
 }

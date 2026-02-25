@@ -1076,6 +1076,7 @@ iot_error_t _es_wifiscaninfo_handler(struct iot_context *ctx, char **output_data
 			err = IOT_ERROR_EASYSETUP_JSON_CREATE_ERROR;
 			goto out;
 		}
+		IOT_DEBUG("add ssid='%s'",(char*)ctx->scan_result[i].ssid);
 		JSON_ADD_ITEM_TO_OBJECT(array_obj, "bssid", JSON_CREATE_STRING(wifi_bssid));
 		JSON_ADD_ITEM_TO_OBJECT(array_obj, "ssid", JSON_CREATE_STRING((char*)ctx->scan_result[i].ssid));
 		JSON_ADD_NUMBER_TO_OBJECT(array_obj, "rssi", (double) ctx->scan_result[i].rssi);
@@ -1097,6 +1098,7 @@ iot_error_t _es_wifiscaninfo_handler(struct iot_context *ctx, char **output_data
 	JSON_ADD_ITEM_TO_OBJECT(root, "wifiScanInfo", array);
 
 	out_payload = JSON_PRINT(root);
+	IOT_DEBUG("out_payload : %s",out_payload);
 	*output_data = _es_build_output_data(ctx->easysetup_security_context, out_payload);
 out:
 	if (out_payload) {
@@ -1220,6 +1222,8 @@ iot_error_t _es_wifi_prov_parse(struct iot_context *ctx, char *in_payload)
 	wifi_prov->security_type =
 		_decide_wifi_auth_mode(JSON_GET_OBJECT_ITEM(wifi_credential, "authType"), wifi_prov, ctx);
 
+	ctx->prov_data.wifi = *wifi_prov;
+
 	err = iot_nv_set_wifi_prov_data(wifi_prov);
 	if (err) {
 		IOT_ERROR("failed to set the cloud prov data");
@@ -1231,6 +1235,7 @@ iot_error_t _es_wifi_prov_parse(struct iot_context *ctx, char *in_payload)
 	IOT_INFO("ssid: %s", wifi_prov->ssid);
 	IOT_DEBUG("password: %s", wifi_prov->password);
 	IOT_INFO("mac addr: %s", wifi_prov->mac_str);
+	IOT_INFO("security_type: %d", wifi_prov->security_type);
 
 wifi_parse_out:
 	if (wifi_prov)
@@ -1238,6 +1243,27 @@ wifi_parse_out:
 	if (root)
 		JSON_DELETE(root);
 	return err;
+}
+
+STATIC_FUNCTION
+iot_error_t _es_copy_cloud_prov(struct iot_cloud_prov_data *dst, struct iot_cloud_prov_data *src)
+{
+	dst->broker_port = src->broker_port;
+
+	dst->broker_url = (char *)iot_os_malloc(strlen(src->broker_url) + 1);
+	dst->label = (char *)iot_os_malloc(strlen(src->label) + 1);
+	if (dst->broker_url == NULL || dst->label == NULL) {
+		IOT_ERROR("failed to iot_os_malloc for cloud prov data");
+		return IOT_ERROR_MEM_ALLOC;
+	}
+
+	strncpy(dst->broker_url, src->broker_url, strlen(src->broker_url));
+	dst->broker_url[strlen(src->broker_url)] = '\0';
+
+	strncpy(dst->label, src->label, strlen(src->label));
+	dst->label[strlen(src->label)] = '\0';
+
+	return IOT_ERROR_NONE;
 }
 
 STATIC_FUNCTION
@@ -1300,6 +1326,22 @@ iot_error_t _es_cloud_prov_parse(struct iot_context *ctx, char *in_payload)
 	IOT_INFO("brokerUrl: %s:%d", cloud_prov->broker_url, cloud_prov->broker_port);
 	IOT_INFO("deviceName : %s", cloud_prov->label);
 
+	err = _es_copy_cloud_prov(&ctx->prov_data.cloud, cloud_prov);
+	if (err) {
+		IOT_ERROR("failed to copy cloud prov data");
+		goto cloud_prov_copy_failed;
+	}
+
+	goto cloud_parse_out;
+
+cloud_prov_copy_failed:
+	if (ctx->prov_data.cloud.broker_url) {
+		iot_os_free(ctx->prov_data.cloud.broker_url);
+	}
+	if (ctx->prov_data.cloud.label) {
+		iot_os_free(ctx->prov_data.cloud.label);
+	}
+
 cloud_prov_data_fail:
 	if (cloud_prov->label) {
 		iot_os_free(cloud_prov->label);
@@ -1341,10 +1383,13 @@ iot_error_t _es_wifiprovisioninginfo_handler(struct iot_context *ctx, char *inpu
 		goto out;
 	}
 
-	err = _es_cloud_prov_parse(ctx, (char *)in_payload);
-	if (err) {
-		IOT_ERROR("failed to parse cloud_prov");
-		goto out;
+	if (!ctx->wifi_update_enabled) {
+		iot_api_prov_data_mem_free(&ctx->prov_data);
+		err = _es_cloud_prov_parse(ctx, (char *)in_payload);
+		if (err) {
+			IOT_ERROR("failed to parse cloud_prov");
+			goto out;
+		}
 	}
 
 	if (ctx->lookup_id == NULL) {
@@ -1387,8 +1432,9 @@ iot_error_t _es_wifiprovisioninginfo_handler(struct iot_context *ctx, char *inpu
 	/* Now we allow D2D process reentrant and prov_data could be loaded
 	 * at the init state or previous D2D, so free it first to avoid memory-leak
 	 */
-	iot_api_prov_data_mem_free(&ctx->prov_data);
-	err = iot_nv_get_prov_data(&ctx->prov_data);
+	// iot_api_prov_data_mem_free(&ctx->prov_data);
+	// err = iot_nv_get_prov_data(&ctx->prov_data);
+
 	if (err) {
 		IOT_ES_DUMP(IOT_DEBUG_LEVEL_ERROR, IOT_DUMP_EASYSETUP_WIFI_DATA_READ_FAIL, err);
 		err = IOT_ERROR_EASYSETUP_WIFI_DATA_READ_FAIL;
@@ -1570,7 +1616,7 @@ iot_error_t iot_easysetup_request_handler(struct iot_context *ctx, struct iot_ea
 
 	response.step = request.step;
 	response.payload = NULL;
-
+	IOT_DEBUG("step : %d", request.step);
 	switch (request.step) {
 	case IOT_EASYSETUP_STEP_DEVICEINFO:
 		err = _es_deviceinfo_handler(ctx, &response.payload);

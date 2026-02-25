@@ -24,7 +24,7 @@
 #include "iot_bsp_wifi.h"
 
 #define IOT_TASK_NAME "iot-task"
-#define IOT_TASK_STACK_SIZE (1024*20)
+#define IOT_TASK_STACK_SIZE (1024*40)
 #define IOT_TASK_PRIORITY (4)
 #define IOT_QUEUE_LENGTH (10)
 

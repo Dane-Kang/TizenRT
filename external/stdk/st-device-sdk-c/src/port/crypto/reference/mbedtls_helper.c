@@ -630,8 +630,11 @@ iot_error_t mbedtls_helper_cipher_aes(iot_security_cipher_params_t *cipher_param
 	}
 
 	IOT_DEBUG("input: %3d@%p", (int)input_buf->len, input_buf->p);
+	//sl_print_buffer(input_buf->p, (int)input_buf->len, "input");
 	IOT_DEBUG("key:   %3d@%p", (int)cipher_params->key.len, cipher_params->key.p);
+	//sl_print_buffer(cipher_params->key.p, (int)cipher_params->key.len, "key");
 	IOT_DEBUG("iv:    %3d@%p", (int)cipher_params->iv.len, cipher_params->iv.p);
+	//l_print_buffer(cipher_params->iv.p, (int)cipher_params->iv.len, "iv");
 
 	mbed_cipher_info = mbedtls_cipher_info_from_type(mbed_cipher_alg);
 	if (!mbed_cipher_info) {
@@ -962,8 +965,6 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 		IOT_ERROR("cloud pubkey is too large");
 		return IOT_ERROR_SECURITY_ECDH_INVALID_PUBKEY;
 	}
-    sl_print_buffer(c_pubkey_buf->p, c_pubkey_buf->len, "c_pubkey_buf");
-	sl_print_buffer(t_seckey_buf->p, t_seckey_buf->len, "t_seckey_buf");
 
 	err = set_st_device_key();
 	if (err) {
@@ -973,10 +974,10 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 	}
 
 	iot_security_buffer_t c_pubkey_buf_ecc25519 = { 0 };
-	err = convert_ed25519_to_ecc25519(c_pubkey_buf->p, &c_pubkey_buf_ecc25519);
+
+	IOT_DEBUG("Do the swap Peer public key");
+	err = _swap_secret(c_pubkey_buf, &c_pubkey_buf_ecc25519);
 	if (err) {
-		IOT_ERROR("mbedtls_ctr_drbg_seed = -0x%04X", -ret);
-		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
 
@@ -1010,17 +1011,10 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 	mbed_ecdh.MBEDTLS_PRIVATE(grp).key_index = ST_SLOT_ENTRY;
 	IOT_DEBUG("Set key_index to %d", ST_SLOT_ENTRY);
 
-#if SWAP_KEY
-	err = _swap_secret(t_seckey_buf, &swap_buf);
-	if (err) {
-		goto exit;
-	}
-	sl_print_buffer(swap_buf.p, swap_buf.len, "swap converted private key");
-	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(d), swap_buf.p, swap_buf.len);
-#else
+
 	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(d), t_seckey_buf->p, t_seckey_buf->len);
 	sl_print_buffer(t_seckey_buf->p, t_seckey_buf->len, "private key");
-#endif
+
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
@@ -1030,17 +1024,8 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 
 	iot_security_buffer_free(&swap_buf);
 
-#if SWAP_KEY
-	err = _swap_secret(&c_pubkey_buf_ecc25519, &swap_buf);
-	if (err) {
-		goto exit;
-	}
-	sl_print_buffer(swap_buf.p, swap_buf.len, "swap converted peer public key");
-
-	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X), swap_buf.p, swap_buf.len);
-#else
 	ret = mbedtls_mpi_read_binary(&mbed_ecdh.MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X), c_pubkey_buf_ecc25519.p, c_pubkey_buf_ecc25519.len);
-#endif
+
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_read_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
@@ -1078,29 +1063,24 @@ iot_error_t mbedtls_helper_ecdh_compute_shared_ed25519(iot_security_buffer_t *t_
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
-IOT_DEBUG("1");
+
 	ret = mbedtls_mpi_write_binary(&mbed_ecdh.MBEDTLS_PRIVATE(z), pmsecret_buf.p, pmsecret_buf.len);
 	if (ret) {
 		IOT_ERROR("mbedtls_mpi_write_binary = -0x%04X", -ret);
 		err = IOT_ERROR_SECURITY_ECDH_LIBRARY;
 		goto exit;
 	}
-IOT_DEBUG("1");
-#if SWAP_KEY
+
+	//mbedtls_ecdh_compute_shared 에서 가져온 shared key값이 reverse가 되어 있다.
 	err = _swap_secret(&pmsecret_buf, &swap_buf);
 	if (err) {
 		goto exit;
 	}
-IOT_DEBUG("1");
+	sl_print_buffer(swap_buf.p, swap_buf.len, "swap shared key");
+
 	output_buf->p = swap_buf.p;
 	output_buf->len = swap_buf.len;
-#else
-	output_buf->p = pmsecret_buf.p;
-	output_buf->len = pmsecret_buf.len;
-	/* prevent double free: transfer ownership to output_buf */
-	pmsecret_buf.p = NULL;
-	pmsecret_buf.len = 0;
-#endif
+
 	err = IOT_ERROR_NONE;
 
 exit:
