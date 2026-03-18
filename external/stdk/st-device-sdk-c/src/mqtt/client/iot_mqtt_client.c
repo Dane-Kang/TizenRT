@@ -1294,7 +1294,7 @@ exit:
 static void _iot_mqtt_ping_timeout(iot_os_timer_handle handle, void *user_data)
 {
 	MQTTClient *c = (MQTTClient *)user_data;
-
+	IOT_INFO("Send ping");
 	if (c->work_queue) {
 		_iot_mqtt_signal_pending_work(c);
 	}

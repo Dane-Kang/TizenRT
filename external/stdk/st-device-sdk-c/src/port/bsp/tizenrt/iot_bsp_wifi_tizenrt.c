@@ -511,3 +511,9 @@ iot_wifi_auth_mode_bits_t iot_bsp_wifi_get_auth_mode(void)
 
 	return supported_mode_bits;
 }
+
+bool iot_bsp_wifi_is_dhcp_success()
+{
+	/* TODO */
+	return g_connection_done ? true : false;
+}

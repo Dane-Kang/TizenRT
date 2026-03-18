@@ -297,6 +297,7 @@ int iot_os_eventgroup_set_bits(iot_os_eventgroup* eventgroup_handle,
     IOT_DEBUG("EG set %p bits=0x%02x", eventgroup, bits_to_set);
 
     pthread_mutex_lock(&eventgroup->mutex);
+    IOT_INFO("EG set lock acquired");
 
     unsigned char newly_set_any = 0;
 
@@ -531,39 +532,59 @@ void iot_os_timer_destroy(iot_os_timer *timer)
 typedef struct _tizenrt_timer_handle {
 	timer_t timerId;
 	bool is_started;
+	bool stop_requested;
 	iot_os_timer_cb user_cb;
 	void *user_data;
 	unsigned int expiry_time_ms;
+	sem_t sem;
+	pthread_t dispatch_thread;
 } _tizenrt_timer_handle;
 
-// static void _port_timer_cb(union sigval timer_data)
-// {
-// 	posix_timer_handle_t *timer_handle = timer_data.sival_ptr;
-// 	timer_handle->is_started = false;
+/* Signal handler: async-signal-safe, sem_post만 수행 */
+static void _port_timer_signal_handler(int signo, siginfo_t *info, void *context)
+{
+	if (info == NULL) {
+		return;
+	}
+	_tizenrt_timer_handle *h = (_tizenrt_timer_handle *)info->si_value.sival_ptr;
+	if (h) {
+		sem_post(&h->sem);
+	}
+}
 
-// 	if (timer_handle->user_cb) {
-// 		timer_handle->user_cb((iot_os_timer_handle)timer_handle, timer_handle->user_data);
-// 	}
-// }
+/* 디스패치 쓰레드: 시그널 핸들러와 분리된 컨텍스트에서 user_cb 호출 */
+static void *_timer_dispatch_thread(void *arg)
+{
+	_tizenrt_timer_handle *h = (_tizenrt_timer_handle *)arg;
+	while (1) {
+		sem_wait(&h->sem);
+		if (h->stop_requested) {
+			break;
+		}
+		h->is_started = false;
+		if (h->user_cb) {
+			h->user_cb((iot_os_timer_handle)h, h->user_data);
+		}
+	}
+	return NULL;
+}
 
 iot_os_timer_handle iot_os_timer_create(iot_os_timer_cb cb, unsigned int expiry_time_ms, void *user_data)
 {
 	_tizenrt_timer_handle *new_timer_handle;
 	int res;
 	struct sigevent sev = { 0 };
+	struct sigaction sa;
 
 	new_timer_handle = (_tizenrt_timer_handle *)malloc(sizeof(_tizenrt_timer_handle));
 	if (new_timer_handle == NULL) {
+		IOT_ERROR("failed to allocate timer handle");
 		return NULL;
 	}
 	memset(new_timer_handle, 0, sizeof(_tizenrt_timer_handle));
 
-    sev.sigev_notify = SIGEV_SIGNAL;
-	//sev.sigev_notify_function = &_port_timer_cb;
-    sev.sigev_value.sival_ptr = new_timer_handle;
-
-	res = timer_create(CLOCK_REALTIME, &sev, &new_timer_handle->timerId);
-	if (res != 0) {
+	if (sem_init(&new_timer_handle->sem, 0, 0) != 0) {
+		IOT_ERROR("Failed to init timer sem, errno=%d", errno);
 		free(new_timer_handle);
 		return NULL;
 	}
@@ -571,20 +592,53 @@ iot_os_timer_handle iot_os_timer_create(iot_os_timer_cb cb, unsigned int expiry_
 	new_timer_handle->user_cb = cb;
 	new_timer_handle->user_data = user_data;
 	new_timer_handle->is_started = false;
+	new_timer_handle->stop_requested = false;
 	new_timer_handle->expiry_time_ms = expiry_time_ms;
+
+	res = pthread_create(&new_timer_handle->dispatch_thread, NULL,
+			_timer_dispatch_thread, new_timer_handle);
+	if (res != 0) {
+		IOT_ERROR("Failed to create timer dispatch thread, errno=%d", res);
+		sem_destroy(&new_timer_handle->sem);
+		free(new_timer_handle);
+		return NULL;
+	}
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = _port_timer_signal_handler;
+	sa.sa_flags = SA_SIGINFO;
+	sa.sa_mask = 0;
+	sigaction(SIGUSR1, &sa, NULL);
+
+	sev.sigev_notify = SIGEV_SIGNAL;
+	sev.sigev_signo = SIGUSR1;
+	sev.sigev_value.sival_ptr = new_timer_handle;
+
+	res = timer_create(CLOCK_REALTIME, &sev, &new_timer_handle->timerId);
+	if (res != 0) {
+		IOT_ERROR("Failed to timer_create, errno=%d", errno);
+		new_timer_handle->stop_requested = true;
+		sem_post(&new_timer_handle->sem);
+		pthread_join(new_timer_handle->dispatch_thread, NULL);
+		sem_destroy(&new_timer_handle->sem);
+		free(new_timer_handle);
+		return NULL;
+	}
 
 	return (iot_os_timer_handle)new_timer_handle;
 }
 
 void iot_os_timer_delete(iot_os_timer_handle timer_handle)
 {
-	int err;
 	_tizenrt_timer_handle *port_timer_handle = (_tizenrt_timer_handle *)timer_handle;
 
-	err = timer_delete(port_timer_handle->timerId);
-	if (err != 0) {
-		printf("Failed to delete timer\n");
-	}
+	timer_delete(port_timer_handle->timerId);
+
+	port_timer_handle->stop_requested = true;
+	sem_post(&port_timer_handle->sem);
+	pthread_join(port_timer_handle->dispatch_thread, NULL);
+	sem_destroy(&port_timer_handle->sem);
+
 	free(port_timer_handle);
 }
 
@@ -599,7 +653,8 @@ int iot_os_timer_start(iot_os_timer_handle timer_handle)
 
 	err = timer_settime(port_timer_handle->timerId, 0, &its, NULL);
 	if (err != 0) {
-		printf("Failed to start timer\n");
+		IOT_ERROR("Failed to start timer");
+        timer_delete(port_timer_handle->timerId);
 	} else {
 		port_timer_handle->is_started = true;
 	}
@@ -614,7 +669,7 @@ int iot_os_timer_stop(iot_os_timer_handle timer_handle)
 
 	err = timer_settime(port_timer_handle->timerId, 0, &its, NULL);
 	if (err != 0) {
-		printf("Failed to stop timer\n");
+		IOT_ERROR("Failed to stop timer");
 	} else {
 		port_timer_handle->is_started = false;
 	}

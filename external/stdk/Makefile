@@ -43,11 +43,6 @@ CFLAGS += -I$(STDK_INCLUDE_DIR)/bsp
 CFLAGS += -I$(STDK_INCLUDE_DIR)/external
 CFLAGS += -I$(STDK_INCLUDE_DIR)/port
 CFLAGS += -I$(STDK_DIR)/src/deps/cbor/tinycbor/src
-#CFLAGS += -I$(STDK_INCLUDE_DIR)
-#CFLAGS += -I$(STDK_INCLUDE_DIR)/bsp
-#CFLAGS += -I$(STDK_INCLUDE_DIR)/os
-#CFLAGS += -I$(STDK_INCLUDE_DIR)/mqtt
-#CFLAGS += -I$(STDK_INCLUDE_DIR)/external
 
 CFLAGS += -I$(TOPDIR)/kernel
 CFLAGS += -I$(TOPDIR)/../external/include/json
@@ -75,33 +70,36 @@ endif
 
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/security/*.c)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/security/backend/software/*.c)
-ifeq ($(CONFIG_STDK_IOT_CORE_USE_MBEDTLS),y)
-CSRCS	+= $(wildcard $(STDK_SRC_DIR)/crypto/mbedtls/*.c)
-endif
 
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/*.c)
 
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_HTTP),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/*.c)
-endif
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_X509),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/tls/*.c)
 else
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/http/tcp/*.c)
 endif
+endif
+
+ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_BLE),y)
+CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/ble/*.c)
+endif
+
 ifeq ($(CONFIG_STDK_IOT_CORE_EASYSETUP_DISCOVERY_SSID),y)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/discovery/ssid/*.c)
 else
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/easysetup/discovery/advertiser/*.c)
 endif
 
+CSRCS	+= $(wildcard $(STDK_SRC_DIR)/mqtt/client/*.c)
+CSRCS	+= $(wildcard $(STDK_SRC_DIR)/mqtt/packet/*.c)
+
 #################################################
 # tizenrt wrapper
 #################################################
 CFLAGS += -DCONFIG_STDK_IOT_CORE_OS_SUPPORT_TIZENRT
 
-CSRCS	+= $(wildcard $(STDK_SRC_DIR)/mqtt/client/*.c)
-CSRCS	+= $(wildcard $(STDK_SRC_DIR)/mqtt/packet/*.c)
 CSRCS	+= $(wildcard $(STDK_SRC_DIR)/port/bsp/tizenrt/*.c)
 
 CSRCS	+= $(STDK_SRC_DIR)/port/os/tizenrt/iot_os_util_tizenrt.c

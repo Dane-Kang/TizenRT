@@ -70,7 +70,7 @@ typedef struct
 	char will_qos;					/**< @brief MQTT will qos */
 } st_mqtt_connect_data;
 
-#define st_mqtt_default_alive_interval	120
+#define st_mqtt_default_alive_interval	60
 #define st_mqtt_connect_data_initializer  { 4, NULL, NULL, NULL, st_mqtt_default_alive_interval, 1, 0, NULL, NULL, 0, 0}
 
 typedef struct st_mqtt_msg {
